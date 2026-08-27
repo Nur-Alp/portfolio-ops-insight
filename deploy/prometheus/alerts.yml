@@ -1,0 +1,42 @@
+groups:
+  - name: osip-portfolio-dashboard
+    rules:
+      - alert: OSIPApiUnavailable
+        expr: up{job="osip-portfolio-dashboard"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: OSIP dashboard API is unavailable
+          runbook: docs/operations-runbook.md#api-unavailable-or-readiness-failing
+
+      - alert: OSIPReadinessFailing
+        expr: probe_success{job="osip-portfolio-dashboard-readiness"} == 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: OSIP database or blob-store readiness is failing
+          runbook: docs/operations-runbook.md#api-unavailable-or-readiness-failing
+
+      - alert: OSIPHighServerErrorRate
+        expr: >-
+          sum(rate(osip_http_requests_total{status=~"5.."}[5m]))
+          / clamp_min(sum(rate(osip_http_requests_total[5m])), 0.001) > 0.05
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: OSIP API 5xx rate is above 5 percent
+          runbook: docs/operations-runbook.md#elevated-server-errors-or-latency
+
+      - alert: OSIPHighP95Latency
+        expr: >-
+          histogram_quantile(0.95,
+          sum by (le) (rate(osip_http_request_duration_seconds_bucket[10m]))) > 2
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: OSIP API p95 latency is above two seconds
+          runbook: docs/operations-runbook.md#elevated-server-errors-or-latency

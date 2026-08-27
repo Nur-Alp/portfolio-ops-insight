@@ -1,0 +1,53 @@
+{
+  "name": "osip-portfolio-dashboard-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "api:generate": "openapi-typescript ../docs/openapi.json -o src/api/schema.d.ts",
+    "api:check": "openapi-typescript ../docs/openapi.json -o src/api/schema.d.ts --check",
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "lint": "eslint .",
+    "test": "NODE_OPTIONS=--no-experimental-webstorage vitest run",
+    "test:watch": "NODE_OPTIONS=--no-experimental-webstorage vitest",
+    "test:e2e": "playwright test",
+    "test:e2e:update": "playwright test --update-snapshots",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@tanstack/react-query": "^5.83.0",
+    "@tanstack/react-router": "^1.130.12",
+    "lucide-react": "^0.468.0",
+    "oidc-client-ts": "^3.4.1",
+    "openapi-fetch": "^0.17.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "recharts": "^3.1.0"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "^4.12.1",
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.61.1",
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.3.0",
+    "@types/react": "^19.1.9",
+    "@types/react-dom": "^19.1.7",
+    "@vitejs/plugin-react": "^4.6.0",
+    "eslint": "^10.8.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.3",
+    "globals": "^17.9.0",
+    "jsdom": "^26.1.0",
+    "openapi-typescript": "^7.13.0",
+    "typescript": "^5.8.3",
+    "typescript-eslint": "^8.65.0",
+    "vite": "^7.1.0",
+    "vitest": "^3.2.4"
+  },
+  "overrides": {
+    "js-yaml": "^4.3.0",
+    "minimatch": "^10.1.1",
+    "brace-expansion": "^5.0.8"
+  }
+}

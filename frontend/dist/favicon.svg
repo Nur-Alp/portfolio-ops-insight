@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title>Portfolio Operations Insight</title>
+  <defs>
+    <linearGradient id="purple" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#b52ac3"/>
+      <stop offset="1" stop-color="#8f1ca7"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="16" fill="url(#purple)"/>
+  <path fill="#fff" d="M20 16h27v7H28v9h16v7H28v15h-8z"/>
+</svg>

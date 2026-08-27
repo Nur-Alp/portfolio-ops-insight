@@ -1,0 +1,146 @@
+name: backend-ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: osip_test
+          POSTGRES_USER: osip
+          POSTGRES_PASSWORD: osip
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U osip -d osip_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      OSIP_TEST_POSTGRES_URL: postgresql+psycopg://osip:osip@localhost:5432/osip_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: python scripts/check_tracked_sources.py
+      - run: pip install --require-hashes -r requirements.lock
+      - run: pip install --no-deps -e .
+      - run: pip-audit -r requirements.lock --require-hashes
+      - run: pytest -q
+
+  frontend:
+    runs-on: ubuntu-latest
+    env:
+      OSIP_E2E_PYTHON: python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: pip install --require-hashes -r requirements.lock
+      - run: pip install --no-deps -e .
+      - working-directory: frontend
+        run: npm ci
+      - working-directory: frontend
+        run: npm audit --audit-level=high
+      - working-directory: frontend
+        run: npm run api:check
+      - working-directory: frontend
+        run: npm run lint
+      - working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - working-directory: frontend
+        run: npm test
+      - working-directory: frontend
+        run: npm run build
+      - working-directory: frontend
+        run: npm run test:e2e
+
+  containers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend release image
+        run: docker build --tag osip-api:test --file Dockerfile .
+      - name: Verify backend release image
+        run: >-
+          docker run --rm osip-api:test
+          python -c "import osip_dashboard"
+      - name: Build OIDC frontend release image
+        run: >-
+          docker build --tag osip-web:test --file frontend/Dockerfile
+          --build-arg VITE_AUTH_MODE=oidc
+          --build-arg VITE_OIDC_AUTHORITY=https://identity.example/tenant
+          --build-arg VITE_OIDC_CLIENT_ID=osip-dashboard-ci
+          --build-arg VITE_OIDC_REDIRECT_URI=https://osip.example/auth/callback
+          .
+      - name: Validate frontend ingress configuration
+        run: >-
+          docker run --rm --add-host api:127.0.0.1
+          osip-web:test nginx -t
+
+  update-e2e-snapshots:
+    # Manual only (Actions tab -> Run workflow). Regenerates the Playwright
+    # visual baselines on this exact Ubuntu/Chromium environment and commits
+    # them, since a baseline captured on a different OS/font stack fails
+    # toHaveScreenshot's dimension check regardless of diff-ratio tolerance.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      OSIP_E2E_PYTHON: python
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: pip install --require-hashes -r requirements.lock
+      - run: pip install --no-deps -e .
+      - working-directory: frontend
+        run: npm ci
+      - working-directory: frontend
+        run: npx playwright install --with-deps chromium
+      - working-directory: frontend
+        run: npm run build
+      - working-directory: frontend
+        run: npx playwright test --update-snapshots
+      - run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add frontend/e2e/dashboard.spec.ts-snapshots/
+          if git diff --cached --quiet; then
+            echo "No snapshot changes."
+          else
+            git commit -m "Update e2e visual baselines (Ubuntu Chromium render)"
+            git push origin HEAD:${{ github.ref_name }}
+          fi
+
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/dependency-review-action@v4

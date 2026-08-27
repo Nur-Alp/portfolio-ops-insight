@@ -1,0 +1,79 @@
+services:
+  migrate:
+    image: osip-portfolio-dashboard-api:${OSIP_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    environment: &api-environment
+      OSIP_ENVIRONMENT: production
+      OSIP_DATABASE_URL: ${OSIP_DATABASE_URL:?Set the PostgreSQL connection URL}
+      OSIP_BLOB_ROOT: /var/lib/osip/source-files
+      OSIP_IDENTITY_PROVIDER: oidc
+      OSIP_OIDC_ISSUER: ${OSIP_OIDC_ISSUER:?Set the exact OIDC issuer}
+      OSIP_OIDC_AUDIENCE: ${OSIP_OIDC_AUDIENCE:?Set the API audience}
+      OSIP_OIDC_JWKS_URL: ${OSIP_OIDC_JWKS_URL:?Set the JWKS URL}
+      OSIP_OIDC_ROLE_MAPPING: ${OSIP_OIDC_ROLE_MAPPING:?Set the external role mapping JSON}
+      OSIP_OIDC_ACTOR_ID_CLAIM: ${OSIP_OIDC_ACTOR_ID_CLAIM:-sub}
+      OSIP_OIDC_ROLES_CLAIM: ${OSIP_OIDC_ROLES_CLAIM:?Set the roles claim path}
+      OSIP_OIDC_PORTFOLIOS_CLAIM: ${OSIP_OIDC_PORTFOLIOS_CLAIM:?Set the portfolios claim path}
+      OSIP_CORS_ORIGINS: ${OSIP_CORS_ORIGINS:?Set the public origin JSON list}
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: "no"
+
+  api:
+    image: osip-portfolio-dashboard-api:${OSIP_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment: *api-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - osip-source-files:/var/lib/osip/source-files
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  web:
+    image: osip-portfolio-dashboard-web:${OSIP_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_AUTH_MODE: oidc
+        VITE_API_BASE_URL: /api/v1
+        VITE_OIDC_AUTHORITY: ${VITE_OIDC_AUTHORITY:?Set the browser OIDC authority}
+        VITE_OIDC_CLIENT_ID: ${VITE_OIDC_CLIENT_ID:?Set the browser OIDC client ID}
+        VITE_OIDC_REDIRECT_URI: ${VITE_OIDC_REDIRECT_URI:?Set the registered redirect URI}
+        VITE_OIDC_SCOPE: ${VITE_OIDC_SCOPE:-openid profile}
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "${OSIP_WEB_BIND:-127.0.0.1:8080}:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+volumes:
+  osip-source-files:

@@ -1,0 +1,44 @@
+/** Stable application aliases over the generated FastAPI OpenAPI contract. */
+import type { components } from "./schema";
+
+type Schemas = components["schemas"];
+
+export type Basis = Schemas["MetricValue"]["basis"];
+export type MetricValue = Schemas["MetricValue"];
+export type PortfolioListItem = Schemas["PortfolioItem"];
+export type PortfolioListResponse = Schemas["PortfolioListResponse"];
+export type SnapshotSummary = Schemas["SnapshotSummary"];
+export type SnapshotListResponse = Schemas["SnapshotListResponse"];
+export type SnapshotOverview = Schemas["SnapshotOverview"];
+export type SnapshotProvenanceResponse = Schemas["SnapshotProvenanceResponse"];
+export type AllocationItem = Schemas["AllocationItem"];
+export type AllocationResponse = Schemas["AllocationResponse"];
+export type SourceRef = Schemas["SourceRef"];
+export type CalendarEvent = Schemas["CalendarEvent"];
+export type CalendarResponse = Schemas["CalendarResponse"];
+export type ReportReadiness = Schemas["ReportReadinessResponse"];
+export type InstrumentHolding = Schemas["InstrumentHolding"];
+export type InstrumentHoldingsResponse = Schemas["InstrumentHoldingsResponse"];
+export type LotHolding = Schemas["LotHolding"];
+export type LotHoldingsResponse = Schemas["LotHoldingsResponse"];
+export type CashBalance = Schemas["CashBalance"];
+export type CashResponse = Schemas["CashResponse"];
+export type IssueSourceRef = Schemas["DQSourceRef"];
+export type DataQualityIssue = Schemas["DataQualityIssue"];
+export type IssuesResponse = Schemas["IssuesResponse"];
+export type MetricDefinition = Schemas["MetricDefinition"];
+export type MetricDefinitionList = Schemas["MetricDefinitionList"];
+export type ImportRecord = Schemas["ImportRecord"];
+export type ImportListResponse = Schemas["ImportListResponse"];
+export type ImportComparison = Schemas["ImportComparisonResponse"];
+export type ReportArtifact = Schemas["ReportArtifact"];
+export type ReportListResponse = Schemas["ReportListResponse"];
+export type ApiErrorPayload = Schemas["HTTPValidationError"] | { detail?: string };
+export type SourceUpload = Schemas["SourceUploadResponse"];
+export type DatasetVersion = Schemas["DatasetVersionResponse"];
+export type ModuleReadResponse = Schemas["ModuleReadResponse"];
+export type SessionContext = Schemas["SessionContextResponse"];
+export type SourcePreviewResponse = Schemas["SourcePreviewResponse"];
+export type ActionItem = Schemas["ActionItemResponse"];
+export type ActionItemListResponse = Schemas["ActionItemListResponse"];
+export type DemoLoginResponse = Schemas["DemoLoginResponse"];

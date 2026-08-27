@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=75", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "osip-portfolio-dashboard"
+version = "0.3.0"
+description = "Portfolio Operations Insight controlled multi-source analytics and workbook ingestion"
+requires-python = ">=3.11"
+dependencies = [
+    "alembic>=1.14,<2",
+    "fastapi>=0.115,<1",
+    "greenlet>=3,<4",
+    "httpx>=0.28,<1",
+    "psycopg[binary]>=3.2,<4",
+    "pydantic-settings>=2.7,<3",
+    "prometheus-client>=0.24,<1",
+    "pyjwt[crypto]>=2.10,<3",
+    "python-multipart>=0.0.20,<1",
+    "python-calamine>=0.5.3,<0.6",
+    "olefile>=0.47,<1",
+    "openpyxl>=3.1.5,<4",
+    "sqlalchemy>=2.0,<3",
+    "uvicorn[standard]>=0.34,<1",
+]
+
+[project.scripts]
+osip-parse = "osip_dashboard.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "httpx>=0.28,<1",
+    "pip-audit>=2.10,<3",
+    "pip-tools>=7.5,<8",
+    "pytest>=8,<10",
+]
+
+[tool.setuptools]
+package-dir = {"" = "backend"}
+
+[tool.setuptools.packages.find]
+where = ["backend"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["backend"]
+markers = [
+    "performance: bounded performance-regression checks for the current workload",
+    "postgres: integration tests that require OSIP_TEST_POSTGRES_URL",
+]

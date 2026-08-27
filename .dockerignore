@@ -1,0 +1,15 @@
+.git
+.github
+.data
+.env
+.venv
+.pytest_cache
+**/__pycache__
+**/*.pyc
+.DS_Store
+internal
+Portfolio operations
+frontend/node_modules
+frontend/dist
+frontend/playwright-report
+frontend/test-results

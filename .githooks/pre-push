@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Runs the same checks GitHub Actions runs (minus the slow/OS-specific E2E
+# suite - see the note at the bottom) before allowing a push, so schema
+# drift, type errors, and test failures are caught locally instead of
+# showing up as a red X on GitHub several minutes later.
+#
+# Installed via: git config core.hooksPath .githooks (see scripts/install_git_hooks.sh)
+# Skip once, if you're sure: git push --no-verify
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+skip_reason=""
+if [ -n "${OSIP_SKIP_PRE_PUSH:-}" ]; then
+  skip_reason="OSIP_SKIP_PRE_PUSH is set"
+fi
+if [ -n "$skip_reason" ]; then
+  echo "pre-push: skipping ($skip_reason)"
+  exit 0
+fi
+
+python=".venv/bin/python"
+if [ ! -x "$python" ]; then
+  echo "pre-push: no .venv/bin/python found - skipping backend checks (run scripts/launch.py once to create it)"
+  python=""
+fi
+
+fail=0
+
+if [ -n "$python" ]; then
+  echo "pre-push: python scripts/check_tracked_sources.py"
+  if ! "$python" scripts/check_tracked_sources.py; then fail=1; fi
+
+  echo "pre-push: pytest -q (includes the OpenAPI contract check - run"
+  echo "  .venv/bin/python scripts/export_openapi.py if this fails on staleness)"
+  if ! "$python" -m pytest -q; then fail=1; fi
+else
+  fail=1
+fi
+
+if [ -d frontend/node_modules ]; then
+  (
+    cd frontend
+    echo "pre-push: npm run api:check"
+    if ! npm run --silent api:check; then exit 1; fi
+    echo "pre-push: npm run lint"
+    if ! npm run --silent lint; then exit 1; fi
+    echo "pre-push: tsc -b"
+    if ! npx tsc -b; then exit 1; fi
+    echo "pre-push: vitest run"
+    if ! npx vitest run --silent; then exit 1; fi
+  ) || fail=1
+else
+  echo "pre-push: frontend/node_modules missing - skipping frontend checks (run npm ci in frontend/)"
+  fail=1
+fi
+
+if [ "$fail" -ne 0 ]; then
+  echo
+  echo "pre-push: one or more checks failed - push blocked."
+  echo "pre-push: fix the issue above, or bypass deliberately with: git push --no-verify"
+  exit 1
+fi
+
+echo "pre-push: all checks passed."
+echo "pre-push: note - this does NOT run the Playwright E2E suite (npm run test:e2e in frontend/)."
+echo "pre-push: that suite's visual-regression check is inherently CI-only (it must run on the exact"
+echo "pre-push: Ubuntu/Chromium environment - see update-e2e-snapshots in .github/workflows/ci.yml)."
+echo "pre-push: run it manually before a UI-visible change if you want that coverage before pushing."

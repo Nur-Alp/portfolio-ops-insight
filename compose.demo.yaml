@@ -1,0 +1,96 @@
+services:
+  migrate:
+    image: osip-portfolio-dashboard-api:${OSIP_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["alembic", "upgrade", "head"]
+    environment: &api-environment
+      OSIP_ENVIRONMENT: production
+      OSIP_DATABASE_URL: ${OSIP_DATABASE_URL:?Set the PostgreSQL connection URL}
+      OSIP_BLOB_ROOT: /var/lib/osip/source-files
+      OSIP_IDENTITY_PROVIDER: demo
+      OSIP_DEMO_JWT_SECRET: ${OSIP_DEMO_JWT_SECRET:?Set a random 32+ character secret - never reuse the one from docs/demo-deployment.md examples}
+      OSIP_CORS_ORIGINS: ${OSIP_CORS_ORIGINS:?Set the public origin JSON list, e.g. ["https://your-demo-host"]}
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: "no"
+
+  # Idempotent: safe to run on every deploy/restart, including when accounts
+  # already exist (see scripts/seed_demo_accounts.py's own docstring). Only
+  # generates a new password for a persona that doesn't have one yet - it
+  # will NOT print passwords again for accounts already seeded on a prior
+  # run, so capture the very first run's output and store it somewhere
+  # durable (a password manager, not this file or shell history).
+  seed:
+    image: osip-portfolio-dashboard-api:${OSIP_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["python", "scripts/seed_demo_accounts.py"]
+    environment: *api-environment
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    volumes:
+      - osip-source-files:/var/lib/osip/source-files
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: "no"
+
+  api:
+    image: osip-portfolio-dashboard-api:${OSIP_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment: *api-environment
+    depends_on:
+      seed:
+        condition: service_completed_successfully
+    volumes:
+      - osip-source-files:/var/lib/osip/source-files
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  web:
+    image: osip-portfolio-dashboard-web:${OSIP_IMAGE_TAG:-local}
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_AUTH_MODE: demo
+        VITE_API_BASE_URL: /api/v1
+    depends_on:
+      api:
+        condition: service_started
+    ports:
+      - "${OSIP_WEB_BIND:-127.0.0.1:8080}:8080"
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /var/cache/nginx
+      - /var/run
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+volumes:
+  osip-source-files:
