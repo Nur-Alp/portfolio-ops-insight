@@ -25,7 +25,7 @@ jobs:
     env:
       OSIP_TEST_POSTGRES_URL: postgresql+psycopg://osip:osip@localhost:5432/osip_test
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -41,7 +41,7 @@ jobs:
     env:
       OSIP_E2E_PYTHON: python
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -73,7 +73,7 @@ jobs:
   containers:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build backend release image
         run: docker build --tag osip-api:test --file Dockerfile .
       - name: Verify backend release image
@@ -105,7 +105,7 @@ jobs:
     env:
       OSIP_E2E_PYTHON: python
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
@@ -142,5 +142,5 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/dependency-review-action@v4
