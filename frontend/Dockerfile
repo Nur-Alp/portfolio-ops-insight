@@ -25,7 +25,7 @@ RUN if [ "${VITE_AUTH_MODE}" = "oidc" ]; then \
     fi \
     && npm run build
 
-FROM nginxinc/nginx-unprivileged:1.27-alpine
+FROM nginxinc/nginx-unprivileged:1.31-alpine
 
 COPY deploy/nginx/default.conf /etc/nginx/conf.d/default.conf
 COPY deploy/nginx/security-headers.inc /etc/nginx/conf.d/security-headers.inc
