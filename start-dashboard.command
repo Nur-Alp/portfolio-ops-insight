@@ -37,17 +37,62 @@ if command -v git >/dev/null 2>&1 && [ -d .git ]; then
   fi
 fi
 
-PYTHON=""
-for candidate in python3.12 python3.11 python3 python; do
-  if command -v "$candidate" >/dev/null 2>&1; then
-    PYTHON="$candidate"
-    break
+find_python() {
+  PYTHON=""
+  for candidate in python3.12 python3.11 python3 python \
+    /opt/homebrew/bin/python3 /usr/local/bin/python3 \
+    /Library/Frameworks/Python.framework/Versions/3.12/bin/python3 \
+    /Library/Frameworks/Python.framework/Versions/3.11/bin/python3; do
+    if command -v "$candidate" >/dev/null 2>&1; then
+      PYTHON="$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+find_python || true
+
+# Nothing else here needs installing: SQLite (the local database) ships
+# inside Python's own standard library, and the prebuilt frontend/dist/
+# bundle (tracked in this repo) means Node/npm are never required just to
+# run the dashboard - see .gitignore's comment on frontend/dist/. Python
+# itself is the one real prerequisite.
+if [ -z "$PYTHON" ]; then
+  echo "Python was not found on this Mac - installing it now (one-time, official builds only)."
+  if command -v brew >/dev/null 2>&1; then
+    # Homebrew's own python formula: same upstream CPython, BSD-licensed
+    # packaging, no admin password needed (installs under Homebrew's own
+    # prefix). Preferred when available since it completes in this same
+    # run - no second double-click needed.
+    echo "Using Homebrew to install Python (this can take a few minutes)..."
+    brew install python@3.12 || echo "Homebrew install failed - falling back to the official python.org installer."
+    find_python || true
   fi
-done
+  if [ -z "$PYTHON" ]; then
+    # Fallback: the official CPython build directly from python.org, under
+    # the PSF License (the same license as Python itself) - not a
+    # third-party or unlicensed build. macOS .pkg installers need either
+    # Installer.app (interactive) or `sudo installer` (this app's own
+    # first-run only, using the standard macOS installer tool, not a
+    # bespoke privilege-escalation trick).
+    PY_PKG_VERSION="3.12.8"
+    PY_PKG_URL="https://www.python.org/ftp/python/${PY_PKG_VERSION}/python-${PY_PKG_VERSION}-macos11.pkg"
+    TMP_PKG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/osip-python-install.XXXXXX")"
+    trap 'rm -rf "$TMP_PKG_DIR"' EXIT
+    echo "Downloading the official Python ${PY_PKG_VERSION} installer from python.org..."
+    if command -v curl >/dev/null 2>&1 && curl --fail --location --silent --show-error "$PY_PKG_URL" -o "$TMP_PKG_DIR/python.pkg"; then
+      echo "Installing Python system-wide - macOS will ask for your account password (this is Apple's own Installer, not a script prompt)."
+      if sudo installer -pkg "$TMP_PKG_DIR/python.pkg" -target / ; then
+        find_python || true
+      fi
+    fi
+  fi
+fi
 
 if [ -z "$PYTHON" ]; then
-  echo "Python was not found on this Mac."
-  echo "Install it from https://www.python.org/downloads/ and double-click this file again."
+  echo "Python could not be installed automatically."
+  echo "Install it yourself from https://www.python.org/downloads/ and double-click this file again."
   read -n 1 -s -r -p "Press any key to close this window..."
   exit 1
 fi

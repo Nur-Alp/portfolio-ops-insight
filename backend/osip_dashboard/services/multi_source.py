@@ -688,6 +688,323 @@ def risk_utilization_history(session: Session, *, uploader_id: str | None = None
     return observations
 
 
+# Condensed, management-style balance sheet: the full statutory f1_uip
+# balance sheet (60+ line items) rolled up into the same 13-row grouping
+# the budget workbook's own "БАЛАНС" section uses (see
+# ingestion/multi_source/accounting.py's _parse_accounting_budget) - the
+# exact grouping formulas came from a real internal rollup workbook,
+# confirmed against a live f1_uip file (a separate, newer real workbook the
+# rollup's own author maintains locally - read for its formulas only, never
+# uploaded or persisted here). This is the bridge that lets an "actual vs.
+# budget" comparison exist on the balance sheet at all, which the page's
+# own AccountingComparabilityNotice already discloses is otherwise missing.
+#
+# Matched by line label, not line_code: the rollup workbook's own formulas
+# reference f1_uip by fixed row number, but comparing that file's line
+# codes against this app's currently-published balance sheet found the
+# numbering itself isn't stable across workbook versions (e.g. "Итого
+# обязательства" is code 42 in one, 43 in another) - only the label text
+# is. Groups use "total minus the other named groups" rather than an
+# enumerated residual list (mirroring the rollup's own liabilities line,
+# B10=f1_uip!C109-B9) precisely because that's immune to the same
+# renumbering, and to a workbook adding or removing a granular line inside
+# an existing group. Restricted to top-level line codes (no "." in the
+# code, e.g. "1" but not "1.1") - a dotted code is always a breakdown of
+# its own parent line, already counted once there; including it too would
+# double it.
+_CONDENSED_BALANCE_SHEET_LINES: tuple[tuple[str, str, str], ...] = (
+    ("asset", "Денежные средства", "Денежные средства"),
+    ("asset", "Средства, размещённые в других банках и операции «обратное РЕПО»", "Cash placed with other banks and reverse repo"),
+    ("asset", "Инвестиционный портфель", "Investment portfolio"),
+    ("asset", "Основные средства и НМА", "Fixed assets and intangibles"),
+    ("asset", "Прочие активы", "Other assets"),
+    ("liability", "Привлечённые средства от банков и финансовых институтов", "Borrowings from banks and financial institutions"),
+    ("liability", "Прочие обязательства", "Other liabilities"),
+    ("equity", "Уставный капитал", "Share capital"),
+    ("equity", "Резерв переоценки ЦБ", "Securities revaluation reserve"),
+    ("equity", "Нераспределённая прибыль", "Retained earnings"),
+)
+
+
+# Human-readable matcher descriptions for each sum_matching-based row, kept
+# alongside the predicates below rather than reverse-engineered from them in
+# the frontend - the derivation drawer quotes these verbatim.
+_ROW_MATCHER_TEXT: dict[str, tuple[str, str]] = {
+    "Денежные средства": (
+        "Наименование строки равно «Денежные средства», «Вклады размещенные» или «Вклады размещённые».",
+        'Line label equals "Денежные средства", "Вклады размещенные", or "Вклады размещённые".',
+    ),
+    "Средства, размещённые в других банках и операции «обратное РЕПО»": (
+        "Наименование строки содержит «репо».",
+        'Line label contains "репо" (repo).',
+    ),
+    "Инвестиционный портфель": (
+        "Наименование строки содержит «ценные бумаги» либо равно «Производные финансовые инструменты».",
+        'Line label contains "ценные бумаги" (securities) or equals "Производные финансовые инструменты" (derivatives).',
+    ),
+    "Основные средства и НМА": (
+        "Наименование строки равно «Нематериальные активы», «Гудвилл» или «Основные средства».",
+        'Line label equals "Нематериальные активы", "Гудвилл", or "Основные средства".',
+    ),
+    "Привлечённые средства от банков и финансовых институтов": (
+        "Наименование строки равно «Займы полученные».",
+        'Line label equals "Займы полученные" (borrowings received).',
+    ),
+    "Уставный капитал": (
+        "Наименование строки равно «Уставный капитал».",
+        'Line label equals "Уставный капитал" (share capital).',
+    ),
+    "Резерв переоценки ЦБ": (
+        "Наименование строки содержит «резерв переоценки» или «резерв обесценения».",
+        'Line label contains "резерв переоценки" or "резерв обесценения" (revaluation/impairment reserve).',
+    ),
+    "Нераспределённая прибыль": (
+        "Наименование строки содержит «нераспределенная прибыль» (в любом написании).",
+        'Line label contains "нераспределенная прибыль" (retained earnings), either spelling.',
+    ),
+}
+
+
+def _contributing_line(row: dict[str, Any], *, sign: str = "+") -> dict[str, Any]:
+    """A single raw balance-sheet line feeding a rollup row's sum.
+
+    Carries the record's own id/source_ref when the caller passed the full
+    module_payload-enriched dicts (web) so the frontend can open a cell
+    preview; the Excel export path only ever passes bare payload dicts, so
+    these stay None there - harmless, since the workbook already sits next
+    to every other sheet in that file.
+    """
+    return {
+        "kind": "line",
+        "sign": sign,
+        "line_code": row.get("line_code"),
+        "line_label": row.get("line_label"),
+        "current_period_kzt": row.get("current_period_kzt"),
+        "prior_period_kzt": row.get("prior_period_kzt"),
+        "id": row.get("id"),
+        "source": row.get("source"),
+    }
+
+
+def _contributing_row(label_ru: str, label_en: str, value: tuple[Decimal | None, Decimal | None], *, sign: str = "+") -> dict[str, Any]:
+    """A reference to another already-computed rollup row (not a raw source
+    line) - used when a total is built from rows above rather than by
+    matching source lines directly, e.g. ИТОГО СОБСТВЕННЫЙ КАПИТАЛ."""
+    current, prior = value
+    return {
+        "kind": "row", "sign": sign, "label_ru": label_ru, "label_en": label_en,
+        "current_period_kzt": str(current) if current is not None else None,
+        "prior_period_kzt": str(prior) if prior is not None else None,
+    }
+
+
+def condensed_balance_sheet(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Roll up the full balance sheet into the budget's own 13-row grouping.
+
+    Every returned row carries a "derivation" describing exactly how its
+    value was built - which source lines (or, for a total built from rows
+    above, which other rollup rows) contributed, with what sign, plus a
+    human-readable matcher description - so a reviewer can see the full
+    chain from a rollup figure back to the source workbook.
+    """
+    top_level = [r for r in records if "." not in str(r.get("line_code") or "")]
+
+    def section_rows(section: str) -> list[dict[str, Any]]:
+        return [r for r in top_level if str(r.get("section") or "").casefold() == section.casefold()]
+
+    def sum_matching(rows: list[dict[str, Any]], predicate) -> tuple[Decimal, Decimal, list[dict[str, Any]]]:
+        # Zero (not None/unavailable) when nothing matches: a bucket with no
+        # corresponding line item this period is a legitimately empty
+        # bucket (e.g. no deposits placed), the same way an unfilled
+        # section of a form means "none", not "unknown". This also lets
+        # the equity reconciliation check below actually flag a gap - a
+        # bucket that quietly turned "unavailable" instead of "0" would
+        # poison the whole total to None and hide the mismatch instead of
+        # surfacing it.
+        current = Decimal(0)
+        prior = Decimal(0)
+        matched: list[dict[str, Any]] = []
+        for row in rows:
+            label = str(row.get("line_label") or "").strip().casefold()
+            if not predicate(label):
+                continue
+            matched.append(row)
+            row_current = row.get("current_period_kzt")
+            row_prior = row.get("prior_period_kzt")
+            if row_current is not None:
+                current += Decimal(str(row_current))
+            if row_prior is not None:
+                prior += Decimal(str(row_prior))
+        return current, prior, matched
+
+    def total_line(rows: list[dict[str, Any]], label: str) -> tuple[Decimal | None, Decimal | None, dict[str, Any] | None]:
+        for row in rows:
+            if str(row.get("line_label") or "").strip().casefold() == label:
+                current = row.get("current_period_kzt")
+                prior = row.get("prior_period_kzt")
+                return (Decimal(str(current)) if current is not None else None, Decimal(str(prior)) if prior is not None else None, row)
+        return None, None, None
+
+    def minus(total: tuple[Decimal | None, Decimal | None], *parts: tuple[Decimal | None, Decimal | None]) -> tuple[Decimal | None, Decimal | None]:
+        total_current, total_prior = total
+        if total_current is None or total_prior is None:
+            return None, None
+        current, prior = total_current, total_prior
+        for part_current, part_prior in parts:
+            current -= part_current or Decimal(0)
+            prior -= part_prior or Decimal(0)
+        return current, prior
+
+    assets = section_rows("Активы")
+    liabilities = section_rows("Обязательства")
+    equity = section_rows("Собственный капитал")
+
+    cash_c, cash_p, cash_lines = sum_matching(assets, lambda label: label in ("денежные средства", "вклады размещенные", "вклады размещённые"))
+    repo_c, repo_p, repo_lines = sum_matching(assets, lambda label: "репо" in label)
+    portfolio_c, portfolio_p, portfolio_lines = sum_matching(assets, lambda label: "ценные бумаги" in label or label == "производные финансовые инструменты")
+    fixed_c, fixed_p, fixed_lines = sum_matching(assets, lambda label: label in ("нематериальные активы", "гудвилл", "основные средства"))
+    cash, repo, portfolio, fixed_assets = (cash_c, cash_p), (repo_c, repo_p), (portfolio_c, portfolio_p), (fixed_c, fixed_p)
+    total_assets_c, total_assets_p, total_assets_line = total_line(assets, "итого активы")
+    total_assets = (total_assets_c, total_assets_p)
+    other_assets = minus(total_assets, cash, repo, portfolio, fixed_assets)
+
+    loans_c, loans_p, loans_lines = sum_matching(liabilities, lambda label: label == "займы полученные")
+    loans = (loans_c, loans_p)
+    total_liabilities_c, total_liabilities_p, total_liabilities_line = total_line(liabilities, "итого обязательства")
+    total_liabilities = (total_liabilities_c, total_liabilities_p)
+    other_liabilities = minus(total_liabilities, loans)
+
+    share_c, share_p, share_lines = sum_matching(equity, lambda label: label == "уставный капитал")
+    reval_c, reval_p, reval_lines = sum_matching(equity, lambda label: "резерв переоценки" in label or "резерв обесценения" in label)
+    retained_c, retained_p, retained_lines = sum_matching(equity, lambda label: "нераспределенная прибыль" in label or "нераспределённая прибыль" in label)
+    share_capital, revaluation_reserve, retained_earnings = (share_c, share_p), (reval_c, reval_p), (retained_c, retained_p)
+
+    values: dict[str, tuple[tuple[Decimal, Decimal], list[dict[str, Any]]]] = {
+        "Денежные средства": (cash, cash_lines),
+        "Средства, размещённые в других банках и операции «обратное РЕПО»": (repo, repo_lines),
+        "Инвестиционный портфель": (portfolio, portfolio_lines),
+        "Основные средства и НМА": (fixed_assets, fixed_lines),
+        "Привлечённые средства от банков и финансовых институтов": (loans, loans_lines),
+        "Уставный капитал": (share_capital, share_lines),
+        "Резерв переоценки ЦБ": (revaluation_reserve, reval_lines),
+        "Нераспределённая прибыль": (retained_earnings, retained_lines),
+    }
+
+    def as_str(value: Decimal | None) -> str | None:
+        return str(value) if value is not None else None
+
+    # Equity has no source residual (the rollup workbook sums exactly these
+    # three named lines, unlike assets/liabilities' "total minus" design) -
+    # sum them directly rather than subtracting from "Итого капитал", so a
+    # nonzero balance on some other equity line (e.g. a reserve this
+    # workbook doesn't carry today) shows up as a real reconciliation gap
+    # instead of being silently absorbed into "Нераспределённая прибыль".
+    def add(*parts: tuple[Decimal | None, Decimal | None]) -> tuple[Decimal | None, Decimal | None]:
+        current = Decimal(0)
+        prior = Decimal(0)
+        for part_current, part_prior in parts:
+            if part_current is None or part_prior is None:
+                return None, None
+            current += part_current
+            prior += part_prior
+        return current, prior
+
+    total_equity_computed = add(share_capital, revaluation_reserve, retained_earnings)
+    total_equity_source_c, total_equity_source_p, total_equity_source_line = total_line(equity, "итого капитал")
+    total_equity_source = (total_equity_source_c, total_equity_source_p)
+
+    rows: list[dict[str, Any]] = []
+    for group, label_ru, label_en in _CONDENSED_BALANCE_SHEET_LINES:
+        if label_ru == "Прочие активы":
+            other_assets_c, other_assets_p = other_assets
+            derivation = {
+                "kind": "total_minus_lines",
+                "formula_ru": "Итого активы − (Денежные средства + РЕПО/обратное РЕПО + Инвестиционный портфель + Основные средства и НМА)",
+                "formula_en": "Total assets − (Cash + Repo/reverse repo + Investment portfolio + Fixed assets and intangibles)",
+                "contributors": [
+                    (_contributing_line(total_assets_line, sign="+") if total_assets_line else {"kind": "line", "sign": "+", "line_code": None, "line_label": "Итого активы", "current_period_kzt": as_str(total_assets_c), "prior_period_kzt": as_str(total_assets_p), "id": None, "source": None}),
+                    _contributing_row("Денежные средства", "Денежные средства", cash, sign="-"),
+                    _contributing_row("Средства, размещённые в других банках и операции «обратное РЕПО»", "Cash placed with other banks and reverse repo", repo, sign="-"),
+                    _contributing_row("Инвестиционный портфель", "Investment portfolio", portfolio, sign="-"),
+                    _contributing_row("Основные средства и НМА", "Fixed assets and intangibles", fixed_assets, sign="-"),
+                ],
+            }
+            rows.append({"group": group, "is_total": False, "label_ru": label_ru, "label_en": label_en, "current_period_kzt": as_str(other_assets_c), "prior_period_kzt": as_str(other_assets_p), "derivation": derivation})
+            # Not a "reconciles" field here: total_assets IS the source's own
+            # "Итого активы" line, and "Прочие активы" was derived as
+            # total_assets minus the other four groups - the two can never
+            # disagree by construction, unlike equity below.
+            rows.append({
+                "group": "total", "is_total": True, "label_ru": "ИТОГО АКТИВЫ", "label_en": "TOTAL ASSETS",
+                "current_period_kzt": as_str(total_assets_c), "prior_period_kzt": as_str(total_assets_p),
+                "derivation": {
+                    "kind": "source_total_line",
+                    "formula_ru": 'Значение читается напрямую из строки источника «Итого активы» (лист f1_uip) - не пересчитывается.',
+                    "formula_en": 'Read directly from the source workbook\'s own "Итого активы" line (sheet f1_uip) - not recomputed.',
+                    "contributors": [_contributing_line(total_assets_line)] if total_assets_line else [],
+                },
+            })
+            continue
+        if label_ru == "Прочие обязательства":
+            other_liabilities_c, other_liabilities_p = other_liabilities
+            derivation = {
+                "kind": "total_minus_lines",
+                "formula_ru": "Итого обязательства − Займы полученные",
+                "formula_en": "Total liabilities − Borrowings received",
+                "contributors": [
+                    (_contributing_line(total_liabilities_line, sign="+") if total_liabilities_line else {"kind": "line", "sign": "+", "line_code": None, "line_label": "Итого обязательства", "current_period_kzt": as_str(total_liabilities_c), "prior_period_kzt": as_str(total_liabilities_p), "id": None, "source": None}),
+                    _contributing_row("Привлечённые средства от банков и финансовых институтов", "Borrowings from banks and financial institutions", loans, sign="-"),
+                ],
+            }
+            rows.append({"group": group, "is_total": False, "label_ru": label_ru, "label_en": label_en, "current_period_kzt": as_str(other_liabilities_c), "prior_period_kzt": as_str(other_liabilities_p), "derivation": derivation})
+            rows.append({
+                "group": "total", "is_total": True, "label_ru": "ИТОГО ОБЯЗАТЕЛЬСТВА", "label_en": "TOTAL LIABILITIES",
+                "current_period_kzt": as_str(total_liabilities_c), "prior_period_kzt": as_str(total_liabilities_p),
+                "derivation": {
+                    "kind": "source_total_line",
+                    "formula_ru": 'Значение читается напрямую из строки источника «Итого обязательства» (лист f1_uip) - не пересчитывается.',
+                    "formula_en": 'Read directly from the source workbook\'s own "Итого обязательства" line (sheet f1_uip) - not recomputed.',
+                    "contributors": [_contributing_line(total_liabilities_line)] if total_liabilities_line else [],
+                },
+            })
+            continue
+        value, matched_lines = values[label_ru]
+        current, prior = value
+        matcher_ru, matcher_en = _ROW_MATCHER_TEXT[label_ru]
+        rows.append({
+            "group": group, "is_total": False, "label_ru": label_ru, "label_en": label_en,
+            "current_period_kzt": as_str(current), "prior_period_kzt": as_str(prior),
+            "derivation": {
+                "kind": "sum_of_lines",
+                "formula_ru": f"Сумма строк раздела Баланса, для которых: {matcher_ru}",
+                "formula_en": f"Sum of Balance Sheet lines where: {matcher_en}",
+                "contributors": [_contributing_line(row) for row in matched_lines],
+            },
+        })
+        if label_ru == "Нераспределённая прибыль":
+            equity_current, equity_prior = total_equity_computed
+            source_current, source_prior = total_equity_source
+            rows.append({
+                "group": "total", "is_total": True, "label_ru": "ИТОГО СОБСТВЕННЫЙ КАПИТАЛ", "label_en": "TOTAL EQUITY",
+                "current_period_kzt": as_str(equity_current), "prior_period_kzt": as_str(equity_prior),
+                "reconciles": total_equity_computed == total_equity_source,
+                "derivation": {
+                    "kind": "sum_of_rows_above",
+                    "formula_ru": "Уставный капитал + Резерв переоценки ЦБ + Нераспределённая прибыль",
+                    "formula_en": "Share capital + Securities revaluation reserve + Retained earnings",
+                    "contributors": [
+                        _contributing_row("Уставный капитал", "Share capital", share_capital),
+                        _contributing_row("Резерв переоценки ЦБ", "Securities revaluation reserve", revaluation_reserve),
+                        _contributing_row("Нераспределённая прибыль", "Retained earnings", retained_earnings),
+                    ],
+                    "source_total_line": _contributing_line(total_equity_source_line) if total_equity_source_line else None,
+                    "source_total_current_period_kzt": as_str(source_current),
+                    "source_total_prior_period_kzt": as_str(source_prior),
+                },
+            })
+    return rows
+
+
 _ACCOUNT_CODE_DATASET_TYPES = ("accounting_balance_sheet", "accounting_income_statement")
 
 
@@ -1058,6 +1375,8 @@ def module_payload(
     for dataset in datasets:
         records.setdefault(dataset.dataset_type, []).extend({"id": str(record.id), "record_type": record.record_type, **record.payload, "source": {**record.source_ref, "filename": dataset.source_upload.original_filename}} for record in dataset.records)
     if module == "accounting":
+        if records.get("accounting_balance_sheet"):
+            records["accounting_balance_sheet_summary"] = condensed_balance_sheet(records["accounting_balance_sheet"])
         records["readiness"] = [
             {"requirement": localize_text("Авторитетный бухгалтерский пакет", language), "status": "received" if datasets else "expected", "detail": localize_text("Текущие книги доступны только для landing/DQ; официальный набор ещё не подтверждён.", language)},
             {"requirement": localize_text("Период и единицы учёта", language), "status": "review" if datasets else "expected", "detail": localize_text("Проверяются конфликты дат, названий и валют.", language)},

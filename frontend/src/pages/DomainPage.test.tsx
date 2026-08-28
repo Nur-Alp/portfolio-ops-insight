@@ -242,8 +242,8 @@ describe("multi-source domain pages", () => {
     fireEvent.click(screen.getByRole("button", { name: "Breaches: source" }));
     const breachDialog = await screen.findByRole("dialog");
     expect(await within(breachDialog).findByText("Metric provenance")).toBeInTheDocument();
-    expect(within(breachDialog).getByText(/Лимит по странам/)).toBeInTheDocument();
-    expect(within(breachDialog).queryByText(/Лимит по дюрации/)).not.toBeInTheDocument();
+    expect(within(breachDialog).getAllByText(/Лимит по странам/).length).toBeGreaterThan(0);
+    expect(within(breachDialog).queryAllByText(/Лимит по дюрации/).length).toBe(0);
     // The card's evidence should point at the cell that actually breached
     // (actual_usd, from field_columns) rather than the record's label cell.
     expect(within(breachDialog).getByText(/cell K5/)).toBeInTheDocument();
@@ -254,8 +254,8 @@ describe("multi-source domain pages", () => {
     fireEvent.click(screen.getByRole("button", { name: "Duration controls: source" }));
     const durationDialog = await screen.findByRole("dialog");
     expect(await within(durationDialog).findByText("Metric provenance")).toBeInTheDocument();
-    expect(within(durationDialog).getByText(/Лимит по дюрации/)).toBeInTheDocument();
-    expect(within(durationDialog).queryByText(/Лимит по странам/)).not.toBeInTheDocument();
+    expect(within(durationDialog).getAllByText(/Лимит по дюрации/).length).toBeGreaterThan(0);
+    expect(within(durationDialog).queryAllByText(/Лимит по странам/).length).toBe(0);
   });
 
   it("uses a 10-row page size for risk tables", async () => {
@@ -458,7 +458,58 @@ describe("multi-source domain pages", () => {
     expect(within(dealsCard).getByText("1")).toBeInTheDocument();
   });
 
-  it("renders the accounting cockpit with KPI cards, both statement tables, and a reconciliation warning", async () => {
+  it("scopes a corporate-finance chart's evidence to only the issuers plotted on it, not every currency's rows", async () => {
+    api.corporateFinance.mockResolvedValue({
+      available: true,
+      disclosure: "Operational source data; not an accounting-approved result.",
+      report_date_mismatch: false,
+      filename_date_mismatch: false,
+      report_dates: ["2026-07-01"],
+      sources: [{
+        dataset_id: "dataset-1", dataset_type: "corporate_finance_register", scope_code: "CORPFIN",
+        source_filename: "sanitized-corporate-finance.xlsx", source_report_date: "2026-07-01", business_date: "2026-07-01",
+        publication_status: "published", version: 1
+      }],
+      summaries: { corporate_finance_register: { deal_count: 4, active_count: 4, period: "H1 2026" } },
+      records: {
+        corporate_finance_register: [
+          {
+            id: "deal-usd-1", issuer: "USD Issuer One", subject: "Bond placement", active: true,
+            placement_currency: "USD", placement_amount: "1000000", demand_currency: "USD", satisfied_demand: "1200000",
+            source: { sheet_name: "Дашборд", row_number: 5, filename: "Направление_Корпфин.xlsx", source_cell: "B5" }
+          },
+          {
+            id: "deal-usd-2", issuer: "USD Issuer Two", subject: "Bond placement", active: true,
+            placement_currency: "USD", placement_amount: "800000", demand_currency: "USD", satisfied_demand: "900000",
+            source: { sheet_name: "Дашборд", row_number: 6, filename: "Направление_Корпфин.xlsx", source_cell: "B6" }
+          },
+          {
+            id: "deal-kzt-1", issuer: "KZT Issuer One", subject: "Loan facility", active: true,
+            placement_currency: "KZT", placement_amount: "500000000", demand_currency: "KZT", satisfied_demand: "600000000",
+            source: { sheet_name: "Дашборд", row_number: 9, filename: "Направление_Корпфин.xlsx", source_cell: "B9" }
+          },
+          {
+            id: "deal-kzt-2", issuer: "KZT Issuer Two", subject: "Loan facility", active: true,
+            placement_currency: "KZT", placement_amount: "400000000", demand_currency: "KZT", satisfied_demand: "450000000",
+            source: { sheet_name: "Дашборд", row_number: 10, filename: "Направление_Корпфин.xlsx", source_cell: "B10" }
+          }
+        ]
+      },
+      pinned_dataset_types: []
+    });
+
+    await renderWithProviders(<ProvenanceProvider><DomainPage kind="corporate-finance" /></ProvenanceProvider>);
+
+    const usdChart = (await screen.findByText("Placement and satisfied demand · USD")).closest("article") as HTMLElement;
+    fireEvent.click(within(usdChart).getByRole("button", { name: "Source" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(/cell B5/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/cell B6/)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/cell B9/)).not.toBeInTheDocument();
+    expect(within(dialog).queryByText(/cell B10/)).not.toBeInTheDocument();
+  });
+
+  it("renders the accounting cockpit with KPI cards, the income statement table, and a reconciliation warning", async () => {
     api.accountingReadiness.mockResolvedValue({
       available: true,
       disclosure: "Operational source data; not an accounting-approved result.",
@@ -494,7 +545,9 @@ describe("multi-source domain pages", () => {
     expect(screen.queryByText("Source check requires attention")).not.toBeInTheDocument();
     expect(screen.queryByText(/accounting_budget: source_errors/)).not.toBeInTheDocument();
     expect(screen.queryByText(/accounting_landing: formula_records_detected/)).not.toBeInTheDocument();
-    expect(screen.getByText("Итого активы")).toBeInTheDocument();
+    // The full line-by-line balance sheet table was retired in favor of the
+    // condensed management-balance rollup (see the dedicated test below); its
+    // record here only feeds KPI cards now, not a visible "Итого активы" row.
     expect(screen.getByText("Итого доходов")).toBeInTheDocument();
     expect(screen.getByText("Процентные доходы")).toBeInTheDocument();
     expect(screen.getByText("Test Issuer")).toBeInTheDocument();
@@ -506,6 +559,82 @@ describe("multi-source domain pages", () => {
     // Second argument is the pinned accounting dataset versions (empty here -
     // no version was pinned in this test) - see the version-pin export fix.
     await waitFor(() => expect(api.exportAccountingData).toHaveBeenCalledWith("", []));
+  });
+
+  it("renders the management balance sheet rollup near the top of the accounting page", async () => {
+    api.accountingReadiness.mockResolvedValue({
+      available: true,
+      disclosure: "Operational source data; not an accounting-approved result.",
+      report_date_mismatch: false,
+      filename_date_mismatch: false,
+      report_dates: ["2026-07-01"],
+      sources: [{ dataset_id: "bs-1", dataset_type: "accounting_balance_sheet", scope_code: "ACCOUNTING", source_filename: "fo.xlsx", source_report_date: "2026-07-01", business_date: "2026-07-01", publication_status: "published", version: 1, dq_blocker_count: 0 }],
+      summaries: { accounting_balance_sheet: { total_assets_kzt: "4856706", total_liabilities_kzt: "72026", total_equity_kzt: "4784680" } },
+      records: {
+        accounting_balance_sheet: [{ id: "bs-row-1", line_code: "25", line_label: "Итого активы", section: "Активы", current_period_kzt: "4856706", prior_period_kzt: "4643981" }],
+        accounting_balance_sheet_summary: [
+          { group: "asset", is_total: false, label_ru: "Денежные средства", label_en: "Денежные средства", current_period_kzt: "80187", prior_period_kzt: "83098" },
+          { group: "total", is_total: true, label_ru: "ИТОГО АКТИВЫ", label_en: "TOTAL ASSETS", current_period_kzt: "4856706", prior_period_kzt: "4643981" },
+          { group: "equity", is_total: false, label_ru: "Уставный капитал", label_en: "Share capital", current_period_kzt: "3500000", prior_period_kzt: "3500000" },
+          { group: "total", is_total: true, label_ru: "ИТОГО СОБСТВЕННЫЙ КАПИТАЛ", label_en: "TOTAL EQUITY", current_period_kzt: "4784680", prior_period_kzt: "4472609", reconciles: false },
+        ],
+      },
+      pinned_dataset_types: []
+    });
+
+    await renderWithProviders(<DomainPage kind="accounting" />);
+
+    const panel = (await screen.findByText("Management balance sheet")).closest(".panel") as HTMLElement;
+    expect(within(panel).getByText("TOTAL ASSETS")).toBeInTheDocument();
+    expect(within(panel).getByText("4,856,706 ₸")).toBeInTheDocument();
+    // A reconciliation gap on the equity total must surface as a visible
+    // note, not be silently swallowed.
+    expect(within(panel).getByText(/doesn't tie to the source's own/)).toBeInTheDocument();
+  });
+
+  it("opens a formula breakdown drawer when a management balance sheet row is clicked", async () => {
+    api.accountingReadiness.mockResolvedValue({
+      available: true,
+      disclosure: "Operational source data; not an accounting-approved result.",
+      report_date_mismatch: false,
+      filename_date_mismatch: false,
+      report_dates: ["2026-07-01"],
+      sources: [{ dataset_id: "bs-1", dataset_type: "accounting_balance_sheet", scope_code: "ACCOUNTING", source_filename: "fo.xlsx", source_report_date: "2026-07-01", business_date: "2026-07-01", publication_status: "published", version: 1, dq_blocker_count: 0 }],
+      summaries: { accounting_balance_sheet: { total_assets_kzt: "80187", total_liabilities_kzt: "0", total_equity_kzt: "0" } },
+      records: {
+        accounting_balance_sheet: [{ id: "bs-row-1", line_code: "1", line_label: "Денежные средства", section: "Активы", current_period_kzt: "80187", prior_period_kzt: "63945" }],
+        accounting_balance_sheet_summary: [
+          {
+            group: "asset", is_total: false, label_ru: "Денежные средства", label_en: "Cash", current_period_kzt: "80187", prior_period_kzt: "63945",
+            derivation: {
+              kind: "sum_of_lines",
+              formula_ru: "Сумма строк раздела Баланса, для которых: наименование строки равно «Денежные средства».",
+              formula_en: 'Sum of Balance Sheet lines where: line label equals "Денежные средства".',
+              contributors: [{
+                kind: "line", sign: "+", line_code: "1", line_label: "Денежные средства",
+                current_period_kzt: "80187", prior_period_kzt: "63945",
+                id: "bs-row-1", source: { sheet_name: "f1_uip", row_number: 12, source_cell: "A12", filename: "fo.xlsx" }
+              }]
+            }
+          }
+        ]
+      },
+      pinned_dataset_types: []
+    });
+
+    await renderWithProviders(<ProvenanceProvider><DomainPage kind="accounting" /></ProvenanceProvider>);
+
+    const panel = (await screen.findByText("Management balance sheet")).closest(".panel") as HTMLElement;
+    fireEvent.click(within(panel).getByText("Cash"));
+
+    expect(await screen.findByText("How this value was derived")).toBeInTheDocument();
+    expect(screen.getByText(/line label equals/)).toBeInTheDocument();
+    // The contributing source line is a clickable evidence row that opens
+    // the real cell preview via the same source-row-id/cell mechanism the
+    // domain tables use.
+    fireEvent.click(screen.getByText(/1\. Денежные средства/));
+    expect(await screen.findByText("Source cell preview")).toBeInTheDocument();
+    expect(api.sourcePreview).toHaveBeenCalledWith("bs-row-1", "A12");
   });
 
   it("switches the income-statement KPI cards between quarter and YTD via the period dropdown", async () => {
@@ -581,6 +710,49 @@ describe("multi-source domain pages", () => {
 
     await screen.findByText("Year to date against the same period last year.");
     expect(screen.queryByText("The reporting quarter against the same quarter last year.")).not.toBeInTheDocument();
+
+    document.body.removeChild(slot);
+  });
+
+  it("swaps the income-statement panel for monthly budget charts and tables via the period dropdown", async () => {
+    api.accountingReadiness.mockResolvedValue({
+      available: true,
+      disclosure: "Operational source data; not an accounting-approved result.",
+      report_date_mismatch: false,
+      filename_date_mismatch: false,
+      report_dates: ["2026-07-01"],
+      sources: [
+        { dataset_id: "is-1", dataset_type: "accounting_income_statement", scope_code: "ACCOUNTING", source_filename: "fo.xlsx", source_report_date: "2026-07-01", business_date: "2026-07-01", publication_status: "published", version: 1, dq_blocker_count: 0 }
+      ],
+      summaries: { accounting_income_statement: { total_income_kzt: "287651", total_expenses_kzt: "184920", net_profit_kzt: "102731" } },
+      records: {
+        accounting_income_statement: [{ id: "is-row-1", line_code: "13", line_label: "Итого доходов", quarter_kzt: "287651", ytd_kzt: "695279" }],
+        accounting_budget: [{
+          id: "budget-row-1", section: "cash_flow", line_label: "Процентные доходы",
+          month_01_kzt: "301", month_02_kzt: "302", month_03_kzt: "303", month_04_kzt: "304", month_05_kzt: "305", month_06_kzt: "306",
+          month_07_kzt: "307", month_08_kzt: "308", month_09_kzt: "309", month_10_kzt: "310", month_11_kzt: "311", month_12_kzt: "312",
+        }]
+      },
+      pinned_dataset_types: []
+    });
+
+    const slot = document.createElement("div");
+    slot.id = "domain-version-bar-slot";
+    document.body.appendChild(slot);
+
+    await renderWithProviders(<DomainPage kind="accounting" />);
+
+    await screen.findByText("Income for the quarter");
+    expect(screen.getByText("Prior-year quarter")).toBeInTheDocument();
+    expect(screen.queryByText("Cash flow by month")).not.toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Income statement"), { target: { value: "monthly" } });
+
+    const monthlyPanel = (await screen.findByText("Cash flow by month")).closest(".panel") as HTMLElement;
+    expect(screen.queryByText("Prior-year quarter")).not.toBeInTheDocument();
+    expect(within(monthlyPanel).getByText("Процентные доходы")).toBeInTheDocument();
+    expect(within(monthlyPanel).getByText("Jan")).toBeInTheDocument();
+    expect(within(monthlyPanel).getByText("Dec")).toBeInTheDocument();
 
     document.body.removeChild(slot);
   });

@@ -9,6 +9,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font
 
 from osip_dashboard.persistence.models import DatasetVersion
+from osip_dashboard.services.multi_source import condensed_balance_sheet
 
 from .shared import _matches_term, _summary_decimal, _write_multi_series_summary_chart, _write_summary_table_with_chart
 
@@ -105,6 +106,35 @@ def _write_accounting_summary(workbook: Workbook, dataset_by_type: dict[str, Dat
     sheet.cell(row + 1, 1, "Доходы − Расходы = Чистая прибыль").font = Font(bold=True)
     sheet.cell(row + 1, 2, income_check)
     row += 3
+
+    if balance_sheet is not None:
+        balance_sheet_records = [
+            record for record in balance_sheet.records
+            if record.record_type == "balance_sheet_line" and _matches_term(record, normalized_term)
+        ]
+        # Same 13-row rollup as the web page's management-balance panel (see
+        # services/multi_source.py) - the budget workbook's own "Баланс"
+        # section groups actual figures the same way, so this is what makes
+        # an actual-vs-budget balance-sheet comparison possible at all. Only
+        # attempted when at least one real line resolved - condensed_balance_
+        # sheet always returns its full 13-row shape even given an empty
+        # input, which would otherwise render a table of all-zero rows.
+        if balance_sheet_records:
+            condensed_rows = condensed_balance_sheet([record.payload for record in balance_sheet_records])
+            management_rows = [
+                [
+                    row_data["label_ru"],
+                    thousand_to_kzt(_summary_decimal(row_data["current_period_kzt"])) if row_data["current_period_kzt"] is not None else "Недоступно",
+                    thousand_to_kzt(_summary_decimal(row_data["prior_period_kzt"])) if row_data["prior_period_kzt"] is not None else "Недоступно",
+                ]
+                for row_data in condensed_rows
+            ]
+            row = _write_multi_series_summary_chart(
+                sheet, row, "Управленческий баланс", ["Статья", "Текущий период, KZT", "Начало года, KZT"], management_rows,
+                numeric_formats={2: "#,##0;[Red](#,##0);-", 3: "#,##0;[Red](#,##0);-"},
+                value_col_first=2, value_col_last=3, chart_title="Управленческий баланс: текущий период и начало года",
+                widths=[40, 22, 22], horizontal=True,
+            )
 
     if assets_kzt is not None and liabilities_kzt is not None and equity_kzt is not None:
         row = _write_summary_table_with_chart(

@@ -31,6 +31,10 @@ export function ChartGrid({ children, single = false }: React.PropsWithChildren<
   return <section className={`insight-chart-grid ${single ? "insight-chart-grid--single" : ""}`}>{children}</section>;
 }
 
+// Rule (same as Panel.tsx's subtitle rule): `subtitle` must say what the
+// chart actually shows and where the numbers come from - not just chart
+// mechanics (a legend already covers that). "Top 10 by X" alone doesn't
+// tell a reader what X measures or which sheet it's from.
 export function ChartCard({ title, subtitle, basis, sourceRefs = [], provenance, compact = false, wide = false, footer, children }: React.PropsWithChildren<{ title: string; subtitle: string; basis: "source" | "derived"; sourceRefs?: ProvenanceRef[]; provenance?: MetricProvenance; compact?: boolean; wide?: boolean; footer?: React.ReactNode }>) {
   const { open } = useProvenance();
   // footer sits outside the role="img" canvas below - interactive controls
@@ -43,12 +47,13 @@ export function Donut({ data, language, valueKind = "kzt", height = 270, minAngl
   // Recharts sorts legend entries alphabetically by default. Keep the
   // visual hierarchy instead: largest slices first, then smaller categories.
   const sortedData = [...data].sort((a, b) => b.value - a.value);
+  const total = sortedData.reduce((sum, item) => sum + item.value, 0);
   return <ResponsiveContainer width="100%" height={height}>
     <PieChart>
       <Pie isAnimationActive={false} data={sortedData} dataKey="value" nameKey="name" innerRadius="58%" outerRadius="82%" paddingAngle={2} minAngle={minAngle} cornerRadius={5} stroke="white" strokeWidth={2}>
         {sortedData.map((item, index) => <Cell key={`${item.name}-${index}`} fill={colorFor?.(item.name, index) ?? COLORS[index % COLORS.length]}/>)}
       </Pie>
-      <Tooltip shared={false} content={<ChartTooltip language={language} valueKind={valueKind}/>}/>
+      <Tooltip shared={false} content={<ChartTooltip language={language} valueKind={valueKind} shareOfTotal={total}/>}/>
       <Legend itemSorter={null} iconType="circle" verticalAlign="bottom" formatter={(value) => <span className="insight-chart-legend">{value}</span>}/>
     </PieChart>
   </ResponsiveContainer>;
@@ -58,7 +63,7 @@ export function ChartLegend({ items }: { items: Array<{ label: string; color: st
   return <div className="insight-chart-fixed-legend" aria-label="Chart legend">{items.map((item) => <span key={item.label}><i style={{ background: item.color }} aria-hidden="true"/>{item.label}</span>)}</div>;
 }
 
-export function ChartTooltip({ active, payload, label, language, valueKind, labelKind, currencyField }: { active?: boolean; payload?: Array<{ name?: string; value?: unknown; color?: string; payload?: ChartDatum; dataKey?: string }>; label?: unknown; language: Language; valueKind: "kzt" | "number" | "percent"; labelKind?: "date"; currencyField?: string }) {
+export function ChartTooltip({ active, payload, label, language, valueKind, labelKind, currencyField, shareOfTotal }: { active?: boolean; payload?: Array<{ name?: string; value?: unknown; color?: string; payload?: ChartDatum; dataKey?: string }>; label?: unknown; language: Language; valueKind: "kzt" | "number" | "percent"; labelKind?: "date"; currencyField?: string; shareOfTotal?: number }) {
   if (!active || !payload?.length) return null;
   // A truncated axis category (see compactChartLabel on the concentration
   // chart) still needs its full name on hover - the row carries an
@@ -77,7 +82,12 @@ export function ChartTooltip({ active, payload, label, language, valueKind, labe
       : valueKind === "kzt" ? formatKzt(String(realValue ?? 0), language)
       : valueKind === "percent" ? `${formatNumber(String((numeric(realValue) ?? 0) * 100), language)}%`
       : formatNumber(String(realValue ?? 0), language);
-    return <div key={`${item.name}-${index}`}><span style={{ background: item.color ?? COLORS[index % COLORS.length] }}/><em>{item.name ?? "—"}</em><b>{displayValue}</b></div>;
+    // Only meaningful for a whole-divided-into-slices chart (a pie/donut) -
+    // callers pass the sum of every slice's own value as shareOfTotal;
+    // bar/line series pass nothing, since a bar's value isn't a share of
+    // anything drawn on the same chart.
+    const share = shareOfTotal && shareOfTotal > 0 ? (numeric(realValue) ?? 0) / shareOfTotal * 100 : null;
+    return <div key={`${item.name}-${index}`}><span style={{ background: item.color ?? COLORS[index % COLORS.length] }}/><em>{item.name ?? "—"}</em><b>{displayValue}{share != null ? <small className="insight-chart-tooltip__share">{formatNumber(String(share), language, 1)}%</small> : null}</b></div>;
   })}</div>;
 }
 

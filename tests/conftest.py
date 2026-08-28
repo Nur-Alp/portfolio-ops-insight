@@ -90,15 +90,7 @@ def demo_api(tmp_path):
 
 @pytest.fixture(scope="session")
 def workbook_paths():
-    """Real OSIP portfolio workbooks are never committed to this repo -
-    they're a customer's live financial data, and the whole point of this
-    app is that each deployment uses its own uploaded workbook, not a
-    bundled sample. Drop a real SOBSTV/TABYS .xls pair into
-    "Portfolio operations/" locally (gitignored - see .gitignore) to run
-    the tests that depend on one; without it, they skip rather than fail.
-    """
-    sobstv = next(WORKBOOK_DIR.glob("*СОБСТВ*.xls"), None)
-    tabys = next(WORKBOOK_DIR.glob("*TABYS*.xls"), None)
-    if sobstv is None or tabys is None:
-        pytest.skip("No local OSIP portfolio workbook - see this fixture's docstring")
-    return {"SOBSTV": sobstv, "TABYS": tabys}
+    return {
+        "SOBSTV": next(WORKBOOK_DIR.glob("*СОБСТВ*.xls")),
+        "TABYS": next(WORKBOOK_DIR.glob("*TABYS*.xls")),
+    }

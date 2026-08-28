@@ -17,6 +17,7 @@ from osip_dashboard.services.date_provenance import extract_filename_date, filen
 @dataclass
 class _FakeRecord:
     payload: dict[str, Any]
+    record_type: str = ""
 
 
 @dataclass
@@ -176,6 +177,47 @@ def test_accounting_summary_flags_a_balance_sheet_mismatch():
     sheet = workbook["Сводка ФО"]
     values = {sheet.cell(row, 1).value: sheet.cell(row, 2).value for row in range(1, sheet.max_row + 1) if sheet.cell(row, 1).value}
     assert values["Активы = Обязательства + Капитал"] == "Расхождение"
+
+
+def test_accounting_summary_adds_the_management_balance_sheet_rollup():
+    # A minimal but real-shaped balance sheet: one line per category the
+    # rollup groups (see _CONDENSED_BALANCE_SHEET_LINES in
+    # services/multi_source.py) plus the three source totals, each tagged
+    # record_type="balance_sheet_line" and a section - exactly what the real
+    # ingestion parser (_parse_accounting_balance_sheet) produces.
+    balance_sheet = _FakeDataset("accounting_balance_sheet", records=[
+        _FakeRecord({"line_code": "1", "line_label": "Денежные средства", "section": "Активы", "current_period_kzt": "1000000", "prior_period_kzt": "900000"}, record_type="balance_sheet_line"),
+        _FakeRecord({"line_code": "2", "line_label": "Ценные бумаги", "section": "Активы", "current_period_kzt": "3200000", "prior_period_kzt": "3100000"}, record_type="balance_sheet_line"),
+        _FakeRecord({"line_code": "25", "line_label": "Итого активы", "section": "Активы", "current_period_kzt": "4200000", "prior_period_kzt": "4000000"}, record_type="balance_sheet_line"),
+        _FakeRecord({"line_code": "26", "line_label": "Займы полученные", "section": "Обязательства", "current_period_kzt": "150000", "prior_period_kzt": "140000"}, record_type="balance_sheet_line"),
+        _FakeRecord({"line_code": "42", "line_label": "Итого обязательства", "section": "Обязательства", "current_period_kzt": "200000", "prior_period_kzt": "190000"}, record_type="balance_sheet_line"),
+        _FakeRecord({"line_code": "43", "line_label": "Уставный капитал", "section": "Собственный капитал", "current_period_kzt": "4000000", "prior_period_kzt": "3800000"}, record_type="balance_sheet_line"),
+        _FakeRecord({"line_code": "52", "line_label": "Итого капитал", "section": "Собственный капитал", "current_period_kzt": "4000000", "prior_period_kzt": "3810000"}, record_type="balance_sheet_line"),
+    ])
+    workbook = Workbook()
+    _write_module_summary(workbook, "accounting", {"accounting_balance_sheet": balance_sheet})
+    sheet = workbook["Сводка ФО"]
+    values = {sheet.cell(row, 1).value: sheet.cell(row, 2).value for row in range(1, sheet.max_row + 1) if sheet.cell(row, 1).value}
+    # Category rows are scaled to full KZT the same way the KPI totals above
+    # are (source states figures in thousands) - 1,000,000 thousand -> 1e9.
+    assert values["Денежные средства"] == Decimal("1000000000")
+    assert values["ИТОГО АКТИВЫ"] == Decimal("4200000000")
+    assert len(sheet._charts) == 2  # Состав баланса pie + the new rollup bar (no income statement in this fixture)
+
+
+def test_accounting_summary_skips_the_management_rollup_when_no_lines_resolved():
+    # No record here carries record_type="balance_sheet_line" (the fixture
+    # only reads the KPI totals by line_label) - the rollup must not render
+    # an all-zero 13-row table in that case.
+    balance_sheet = _FakeDataset("accounting_balance_sheet", records=[
+        _FakeRecord({"line_code": "25", "line_label": "Итого активы", "current_period_kzt": "4200000"}),
+        _FakeRecord({"line_code": "42", "line_label": "Итого обязательства", "current_period_kzt": "200000"}),
+        _FakeRecord({"line_code": "52", "line_label": "Итого капитал", "current_period_kzt": "4000000"}),
+    ])
+    workbook = Workbook()
+    _write_module_summary(workbook, "accounting", {"accounting_balance_sheet": balance_sheet})
+    sheet = workbook["Сводка ФО"]
+    assert "Управленческий баланс" not in {sheet.cell(row, 1).value for row in range(1, sheet.max_row + 1)}
 
 
 def test_risk_summary_adds_all_six_conditional_charts():

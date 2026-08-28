@@ -79,7 +79,7 @@ svg { width: 18px; height: 18px; flex: none; }
    in - margin-right: auto only pins it to the far left, ahead of the
    always-right-aligned controls, once it actually has content. */
 .topbar__page-control:not(:empty) { margin-right: auto; }
-.topbar-period-picker select { padding: 7px 27px 7px 10px; color: var(--purple-700); background: var(--purple-100); border: 1px solid transparent; border-radius: 999px; font-size: 11px; font-weight: 700; }
+.topbar-period-picker select { min-width: 170px; padding: 11px 36px 11px 16px; color: var(--purple-700); background: var(--purple-100); border: 1px solid transparent; border-radius: 999px; font-size: 14px; font-weight: 700; }
 .icon-button { width: 36px; height: 36px; display: inline-grid; place-items: center; padding: 0; color: var(--ink-700); background: white; border: 1px solid var(--line); border-radius: 9px; }
 .command-search { min-width: 235px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; color: var(--ink-500); background: white; border: 1px solid var(--line); border-radius: 9px; font-size: 12px; text-align: left; }
 .command-search span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -224,6 +224,10 @@ table { width: 100%; border-collapse: collapse; font-size: 11px; }
 th { padding: 9px 10px; color: var(--ink-500); font-size: 9px; letter-spacing: .04em; text-align: left; text-transform: uppercase; border-bottom: 1px solid var(--line-strong); }
 td { padding: 11px 10px; color: var(--ink-700); border-bottom: 1px solid var(--line); vertical-align: middle; }
 tbody tr:hover { background: #faf8fc; }
+.management-balance-row--total td { background: var(--canvas); border-top: 1px solid var(--line-strong); }
+.management-balance-row--clickable { cursor: pointer; }
+.management-balance-row--clickable:hover td { background: #faf8fc; }
+.management-balance-row--clickable:focus-visible { outline: 3px solid rgb(146 38 168 / 35%); outline-offset: -3px; }
 .page-stack--source-rows tbody tr:has(.source-cell[data-source-row-id]) { cursor: pointer; }
 .page-stack--source-rows tbody tr:has(.source-cell[data-source-row-id]):hover { background: #faf8fc; }
 .page-stack--source-rows tbody tr[data-source-row]:focus-visible { outline: 3px solid rgb(146 38 168 / 35%); outline-offset: -3px; background: #faf8fc; }
@@ -501,7 +505,8 @@ td small { margin-top: 3px; color: var(--ink-500); }
 .insight-chart-tooltip > div { display: grid; grid-template-columns: 8px minmax(70px, 1fr) auto; align-items: center; gap: 7px; margin-top: 5px; font-size: 11px; }
 .insight-chart-tooltip span { width: 7px; height: 7px; border-radius: 50%; }
 .insight-chart-tooltip em { color: var(--ink-500); font-style: normal; }
-.insight-chart-tooltip b { color: var(--ink-950); font-variant-numeric: tabular-nums; }
+.insight-chart-tooltip b { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; color: var(--ink-950); font-variant-numeric: tabular-nums; }
+.insight-chart-tooltip__share { color: var(--ink-500); font-weight: 500; font-size: 10px; }
 .insight-chart-legend { color: var(--ink-500); font-size: 11px; }
 .insight-chart-empty { min-height: 260px; display: grid; place-items: center; padding: 20px; color: var(--ink-500); font-size: 12px; text-align: center; }
 .recharts-surface:focus { outline: none; }

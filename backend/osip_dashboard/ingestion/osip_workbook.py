@@ -92,8 +92,10 @@ _FIELD_LABELS: dict[str, tuple[str, ...]] = {
     "previous_coupon_date": ("Дата последней купонной выплаты",),
     "next_coupon_date": ("Дата следующей купонной выплаты",),
     "expected_coupon": ("Сумма ожидаемого купона",),
+    "coupon_period_days": ("Купоннный период",),
     "accrued_income_kzt": ("Накопленный купон в ТЕНГЕ / Начисленное вознаграждение по депозиту",),
     "principal_indexation": ("индексация основной суммы",),
+    "coupon_indexation": ("индексация для купона",),
     "report_fx_rate": ("курс для ЦБ",),
     "listing_rating": ("листинг/\nрейтинг",),
 }
@@ -381,7 +383,7 @@ def _dq01_message(position: PositionLotSnapshot) -> str:
             f"Балансовая сумма недоступна для лота {position.security_code} ({security_type}) - "
             "строка будет исключена из расчётной балансовой стоимости и операционного итога. "
             "Проверьте, не указано ли значение под другим заголовком для этого типа инструмента "
-            "(например, «Объём закрытия» для депозитов, «Цена закрытия» для РЕПО), прежде чем "
+            "(например, «Объём покупки» для депозитов, «Цена закрытия» для РЕПО), прежде чем "
             "подтверждать импорт."
         )
     return (
@@ -422,20 +424,25 @@ def _parse_position(
     # parsing time so it cannot silently disappear from an aggregate as zero.
     carrying_amount_native = _decimal(_fc(row, columns, "carrying_amount_native"))
     row_close_date = _as_date(_fc(row, columns, "close_date"))
-    if carrying_amount_native is None and row_close_date == report_date:
-        # The source never fills "Балансовая стоимость" for a deposit -
-        # instead it puts the equivalent figure under a column shared with
-        # repo's closing *price* ("Цена закрытия (для репо) / Объем закрытия
-        # (для депозита)"). Only usable for a deposit specifically (a repo's
-        # reading there is a price, not an amount - applying this to a repo
-        # row would silently substitute the wrong unit), and only when the
-        # deposit closes exactly on the report date: before that, this
-        # column holds the maturity value including interest not yet
-        # accrued, which would overstate today's carrying value if treated
-        # as a current snapshot.
+    if carrying_amount_native is None:
+        # The source workbook never fills "Балансовая стоимость" for a
+        # deposit at all - confirmed by inspecting its own "Рыночная
+        # стоимость" formula directly (via LibreOffice, since the saved
+        # file only carries a stale cached result): for a deposit
+        # (BI=5), that formula reads
+        # =IF(BI=9,"",IF(BI=5,AX40+AA40,...)) - accrued deposit interest
+        # (AX, "Накопленный купон.../Начисленное вознаграждение по
+        # депозиту") plus the purchase amount (AA, "Объем покупки в
+        # тенге"), never the carrying-value column at all. Mirror that
+        # exactly: substitute the native purchase amount for a deposit
+        # specifically (a repo's blank carrying value is a different,
+        # unrelated gap - this substitution only makes sense for the
+        # workbook's own deposit branch). accrued_income_kzt is already
+        # added separately in derived_carrying_value_kzt below, matching
+        # the formula's own "+AX" term, so it isn't added twice here.
         raw_type = _text(_fc(row, columns, "security_type")).casefold()
         if "депозит" in raw_type:
-            carrying_amount_native = _decimal(_fc(row, columns, "deposit_closing_amount_native"))
+            carrying_amount_native = _decimal(_fc(row, columns, "purchase_amount_native"))
     report_fx_rate = _decimal(_fc(row, columns, "report_fx_rate"))
     unavailable = unavailable + tuple(
         field_name
@@ -499,6 +506,8 @@ def _parse_position(
         next_coupon_date=_as_date(_fc(row, columns, "next_coupon_date")),
         listing_rating=_text(_fc(row, columns, "listing_rating")),
         expected_coupon_cached=expected_coupon_cached,
+        coupon_period_days=_decimal(_fc(row, columns, "coupon_period_days")),
+        coupon_indexation=_decimal(_fc(row, columns, "coupon_indexation")),
         unavailable_fields=unavailable,
         raw_row=row,
     )

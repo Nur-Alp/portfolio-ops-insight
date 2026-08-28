@@ -134,7 +134,46 @@ const routeTree = rootRoute.addChildren([
   riskRoute
 ]);
 
+// scripts/launch.py always opens a fresh browser tab at the bare root URL
+// (plus a cache-busting ?build= param) after every restart, which otherwise
+// bounces the user back to the Overview page no matter which domain they had
+// open. Resume the last page instead: on a hard page load that lands on "/"
+// with nothing else to distinguish it (no deep-linked search params beyond
+// the launcher's own ?build=), rewrite the URL to the last route recorded
+// below before the router reads window.location for its initial state. This
+// only runs once per hard load (module-level, evaluated on import) - an
+// in-app click on the "Overview" nav link is a client-side navigation that
+// never re-imports this module, so it is never hijacked.
+export const LAST_ROUTE_STORAGE_KEY = "osip:last-route";
+
+export function resumeLastRouteOnBoot(): void {
+  if (typeof window === "undefined") return;
+  if (window.location.pathname !== "/") return;
+  const bootstrapSearch = new URLSearchParams(window.location.search);
+  bootstrapSearch.delete("build");
+  if ([...bootstrapSearch.keys()].length > 0) return; // a real deep link to "/", not the launcher's bare URL
+  try {
+    const lastRoute = window.localStorage.getItem(LAST_ROUTE_STORAGE_KEY);
+    if (lastRoute && lastRoute.startsWith("/") && lastRoute !== "/") {
+      window.history.replaceState(null, "", lastRoute);
+    }
+  } catch {
+    // Storage can throw in a locked-down browser context - resuming the
+    // last route is a convenience, never worth failing the app boot over.
+  }
+}
+resumeLastRouteOnBoot();
+
 export const router = createRouter({ routeTree, defaultPreload: "intent" });
+
+router.subscribe("onResolved", () => {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(LAST_ROUTE_STORAGE_KEY, window.location.pathname + window.location.search);
+  } catch {
+    // Same reasoning as above - never let this block navigation.
+  }
+});
 
 declare module "@tanstack/react-router" {
   interface Register {

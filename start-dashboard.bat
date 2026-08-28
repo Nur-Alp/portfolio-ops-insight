@@ -20,15 +20,31 @@ if exist ".git" (
   )
 )
 
-set PYTHON=
-where py >nul 2>nul && set PYTHON=py -3
+call :find_working_python
+
+REM Nothing else here needs installing: SQLite (the local database) ships
+REM inside Python's own standard library, and the prebuilt frontend\dist\
+REM bundle (tracked in this repo) means Node/npm are never required just to
+REM run the dashboard. Python itself is the one real prerequisite.
 if "%PYTHON%"=="" (
-  where python >nul 2>nul && set PYTHON=python
+  echo Python was not found on this computer - installing it now ^(one-time, official build only^).
+  where winget >nul 2>nul
+  if not errorlevel 1 (
+    REM winget is Microsoft's own package manager, built into Windows 10
+    REM ^(2004+^) and Windows 11. Python.Python.3.12 is the official CPython
+    REM build from python.org, PSF-licensed - not a third-party repack.
+    echo Installing Python via winget ^(this can take a few minutes^)...
+    winget install --id Python.Python.3.12 -e --silent --accept-package-agreements --accept-source-agreements
+  ) else (
+    echo winget was not found; downloading the official python.org installer instead...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $exe=Join-Path $env:TEMP 'osip-python-installer.exe'; Invoke-WebRequest -UseBasicParsing -Uri 'https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe' -OutFile $exe; Start-Process -FilePath $exe -ArgumentList '/quiet','InstallAllUsers=0','PrependPath=1' -Wait"
+  )
+  call :find_working_python
 )
 
 if "%PYTHON%"=="" (
-  echo Python was not found on this computer.
-  echo Install it from https://www.python.org/downloads/ and run this file again.
+  echo Python could not be installed automatically.
+  echo Install it yourself from https://www.python.org/downloads/ and run this file again.
   echo IMPORTANT: during install, check "Add python.exe to PATH".
   pause
   exit /b 1
@@ -40,5 +56,46 @@ if errorlevel 1 (
   echo Something went wrong. See the messages above for details.
   pause
   exit /b 1
+)
+exit /b 0
+
+:find_working_python
+REM `where py`/`where python` alone isn't proof Python is usable: modern
+REM Windows registers "App Execution Alias" stub executables for python.exe/
+REM py.exe (in %LocalAppData%\Microsoft\WindowsApps, alongside winget.exe
+REM itself) that `where` happily finds even when no real Python is
+REM installed - running the stub just opens the Microsoft Store instead of
+REM Python. Actually invoke each candidate and check it really works.
+REM
+REM A PATH change made by an installer that ran during this same script is
+REM also invisible to this already-running cmd.exe session (child processes
+REM inherit the parent's environment block, not a live re-read of the
+REM registry) - `where`/bare invocation can still fail right after a
+REM successful install for that reason too, so this also checks the
+REM installers' own fixed, well-known locations directly by path.
+set PYTHON=
+py -3 -c "import sys" >nul 2>nul
+if not errorlevel 1 (
+  set PYTHON=py -3
+  exit /b 0
+)
+python -c "import sys" >nul 2>nul
+if not errorlevel 1 (
+  set PYTHON=python
+  exit /b 0
+)
+for %%P in (
+  "%LocalAppData%\Programs\Python\Python312\python.exe"
+  "%LocalAppData%\Programs\Python\Python311\python.exe"
+  "C:\Program Files\Python312\python.exe"
+  "C:\Program Files\Python311\python.exe"
+) do (
+  if exist %%P (
+    %%P -c "import sys" >nul 2>nul
+    if not errorlevel 1 (
+      set PYTHON=%%P
+      exit /b 0
+    )
+  )
 )
 exit /b 0

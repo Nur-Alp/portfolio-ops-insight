@@ -16,8 +16,8 @@ import { useProvenance } from "../components/ui/ProvenanceContext";
 import { useScrollAnchor } from "../hooks/useScrollAnchor";
 import {
   AccountingBudgetSectionPanel, AccountingComparabilityNotice, AccountingIncomeStatementPanel,
-  AccountingPeriodToggle, AccountingPortfolioPanel, AccountingReconciliationBanner,
-  AccountingVersionPickerBar, AccountMappingPanel, type IncomeStatementPeriod,
+  AccountingManagementBalancePanel, AccountingMonthlyPanel, AccountingPeriodToggle, AccountingPortfolioPanel,
+  AccountingReconciliationBanner, AccountingVersionPickerBar, AccountMappingPanel, type IncomeStatementPeriod,
 } from "./domain-panels/AccountingPanels";
 import { BrokerageDerivativesPanel, BrokerageRepoToggle } from "./domain-panels/BrokeragePanels";
 import { ClientDetailPanel, ClientIdentityExceptionPanel, ClientManagerPanel, ClientMaturityPanel } from "./domain-panels/ClientsPanels";
@@ -154,6 +154,14 @@ export function DomainPage({ kind }: { kind: DomainKind }) {
     if (!normalized) return rows;
     return rows.filter((row) => matchesSearchTerm(row, normalized));
   }, [rows, term]);
+  // The full line-by-line "Бухгалтерский баланс" table was retired in favor
+  // of the condensed Управленческий баланс rollup above; the Excel export it
+  // used to host stays available on its own, export-only panel below.
+  const accountingExportPanel = exporter && kind === "accounting" ? (
+    <Panel title={l("Экспорт данных", "Data export")} subtitle={l("Полный набор бухгалтерских данных, включая построчный баланс, доступен как выгрузка в Excel.", "The full accounting dataset, including the line-by-line balance sheet, is available as an Excel export.")} action={<button className="button button--secondary" type="button" disabled={exportFile.isPending} onClick={() => exportFile.mutate({ termValue: term, includeRepo })}><Download aria-hidden="true" />{exportFile.isPending ? l("Подготовка…", "Preparing…") : l("Экспорт в Excel", "Export to Excel")}</button>}>
+      {exportFile.error ? <div className="inline-error" role="alert">{exportFile.error.message}</div> : null}
+    </Panel>
+  ) : null;
   if (query.isLoading) return <LoadingState label={l("Загрузка данных раздела", "Loading domain data")} />;
   if (query.error) return <ErrorState error={query.error} retry={() => query.refetch()} />;
   if (!data) return <LoadingState label={l("Загрузка данных раздела", "Loading domain data")} />;
@@ -224,7 +232,11 @@ export function DomainPage({ kind }: { kind: DomainKind }) {
   // Pulled out so the risk page can place it right after the charts (see
   // below) while every other domain keeps its original position further
   // down, without duplicating this large block.
-  const mainTablePanel = <Panel title={meta.tableTitle} subtitle={l(`Показано ${visibleRows.length} из ${searchableRows.length} строк; каждая строка сохраняет ссылку на исходную рабочую книгу.`, `${visibleRows.length} of ${searchableRows.length} rows shown; every row retains a source-workbook reference.`)} action={<div className="table-tools"><label className="search-field"><Search aria-hidden="true" /><span className="sr-only">{l("Поиск по строкам", "Search rows")}</span><input value={term} onChange={(event) => setSearchTerm(event.target.value)} placeholder={l("Поиск по строкам", "Search rows")} /></label><SourceRowLegend language={language} />{exporter ? <button className="button button--secondary" type="button" disabled={exportFile.isPending} onClick={() => exportFile.mutate({ termValue: term, includeRepo })}><Download aria-hidden="true" />{exportFile.isPending ? l("Подготовка…", "Preparing…") : l("Экспорт в Excel", "Export to Excel")}</button> : null}</div>}>
+  // Subtitle leads with what the table actually contains (meta.description,
+  // the same sentence the page header uses) before the row-count/provenance
+  // mechanics - a reader landing on this panel via a bookmark or a scroll
+  // shouldn't have to go find the page header to learn what it's looking at.
+  const mainTablePanel = <Panel title={meta.tableTitle} subtitle={l(`${meta.description} Показано ${visibleRows.length} из ${searchableRows.length} строк; каждая строка сохраняет ссылку на исходную рабочую книгу.`, `${meta.description} ${visibleRows.length} of ${searchableRows.length} rows shown; every row retains a source-workbook reference.`)} action={<div className="table-tools"><label className="search-field"><Search aria-hidden="true" /><span className="sr-only">{l("Поиск по строкам", "Search rows")}</span><input value={term} onChange={(event) => setSearchTerm(event.target.value)} placeholder={l("Поиск по строкам", "Search rows")} /></label><SourceRowLegend language={language} />{exporter ? <button className="button button--secondary" type="button" disabled={exportFile.isPending} onClick={() => exportFile.mutate({ termValue: term, includeRepo })}><Download aria-hidden="true" />{exportFile.isPending ? l("Подготовка…", "Preparing…") : l("Экспорт в Excel", "Export to Excel")}</button> : null}</div>}>
     {exportFile.error ? <div className="inline-error" role="alert">{exportFile.error.message}</div> : null}
     {visibleRows.length ? <><DomainTable kind={kind} rows={visibleRows} language={language} onClientDetail={kind === "clients" ? setSelectedClientRecord : undefined} /><div className="table-pagination" ref={mainPagination.ref}><span>{l(`Страница ${page + 1} из ${pageCount} · ${pageSize} строк на странице`, `Page ${page + 1} of ${pageCount} · ${pageSize} rows per page`)}</span><label className="table-pagination__jump"><span>{l("Перейти", "Go to")}</span><select aria-label={l("Выбрать страницу", "Choose page")} value={page} onChange={(event) => { mainPagination.anchor(); setPage(Number(event.target.value)); }}>{Array.from({ length: pageCount }, (_, index) => <option key={index} value={index}>{index + 1}</option>)}</select></label><div><button className="icon-button" type="button" aria-label={l("Предыдущая страница", "Previous page")} disabled={page === 0} onClick={() => { mainPagination.anchor(); setPage((value) => Math.max(0, value - 1)); }}><ChevronLeft aria-hidden="true" /></button><button className="icon-button" type="button" aria-label={l("Следующая страница", "Next page")} disabled={page >= pageCount - 1} onClick={() => { mainPagination.anchor(); setPage((value) => Math.min(pageCount - 1, value + 1)); }}><ChevronRight aria-hidden="true" /></button></div></div></> : <EmptyState title={l("Нет строк для отображения", "No rows to display")} detail={term ? l("Измените поиск.", "Change the search term.") : l("Опубликованный набор содержит только сводные показатели.", "The published dataset contains summary values only.")} />}
   </Panel>;
@@ -244,16 +256,22 @@ export function DomainPage({ kind }: { kind: DomainKind }) {
       {kind === "asset-management" ? <FundControlsPanel data={data} language={language} /> : null}
       {kind === "risk" ? <RiskControlsPanel data={data} language={language} /> : null}
       {kind === "clients" ? <><ClientMaturityPanel data={data} language={language} /><ClientManagerPanel data={data} language={language} /><ClientIdentityExceptionPanel /></> : null}
-      {kind === "treasury" ? <TreasuryDetailLinks language={language} /> : kind === "risk" ? null : mainTablePanel}
+      {kind === "treasury" ? <TreasuryDetailLinks language={language} /> : kind === "risk" || kind === "accounting" ? null : mainTablePanel}
       {kind === "brokerage" ? <BrokerageDerivativesPanel data={data} language={language} /> : null}
       {kind === "accounting" ? <>
-        <AccountingIncomeStatementPanel data={data} language={language} />
+        <AccountingManagementBalancePanel data={data} language={language} />
+        {incomeStatementPeriod === "monthly" ? <>
+          <AccountingMonthlyPanel data={data} language={language} section="income_statement" />
+          <AccountingMonthlyPanel data={data} language={language} section="cash_flow" />
+          <AccountingMonthlyPanel data={data} language={language} section="balance" />
+        </> : <AccountingIncomeStatementPanel data={data} language={language} />}
         <AccountingComparabilityNotice language={language} />
         <AccountingBudgetSectionPanel data={data} language={language} section="income_statement" />
         <AccountingBudgetSectionPanel data={data} language={language} section="cash_flow" />
         <AccountingBudgetSectionPanel data={data} language={language} section="balance" />
         <AccountingPortfolioPanel data={data} language={language} />
         <AccountMappingPanel data={data} language={language} />
+        {accountingExportPanel}
       </> : null}
       {kind === "risk" || kind === "accounting" ? <ActionItemsPanel domain={kind} language={language} /> : null}
       {kind === "clients" && selectedClientRecord ? <div ref={clientDetailRef} tabIndex={-1}><ClientDetailPanel recordId={selectedClientRecord} onClose={() => setSelectedClientRecord(null)} /></div> : null}
@@ -522,8 +540,12 @@ function domainCards(kind: DomainKind, data: ModuleReadResponse, language: "ru" 
     // balance sheet's point-in-time snapshot above - the source workbook
     // carries a separate column for each of "quarter" and "YTD" per line
     // (see AccountingPeriodToggle), so which one these three cards show is
-    // a real toggle, not a fixed quarter.
-    const incomeField = `${incomeStatementPeriod}_kzt`;
+    // a real toggle, not a fixed quarter. "Monthly" has no equivalent
+    // column on this dataset (it lives on the separate budget workbook
+    // instead - see AccountingMonthlyPanel), so these three cards fall
+    // back to the quarter figure rather than looking up a field that can
+    // never exist.
+    const incomeField = incomeStatementPeriod === "monthly" ? "quarter_kzt" : `${incomeStatementPeriod}_kzt`;
     const totalIncome = total(incomeStatementRecords, "итого доходов", incomeField);
     const totalExpenses = total(incomeStatementRecords, "итого расходов", incomeField);
     const netProfit = total(incomeStatementRecords, "чистая прибыль (убыток) до уплаты корпоративного подоходного налога", incomeField);

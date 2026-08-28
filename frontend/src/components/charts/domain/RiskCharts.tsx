@@ -18,7 +18,7 @@ import {
 import type { ModuleReadResponse } from "../../../api/types";
 import {
   ChartCard, ChartEmpty, ChartGrid, ChartLegend, ChartTooltip, COLORS, GRID, MUTED, axisTick, categoryAxisWidth,
-  compact, compactChartLabel, numeric, shortDate, type Language, type ProvenanceRef, type Row,
+  compact, compactChartLabel, numeric, shortDate, sourceRefsFromRecords, type Language, type ProvenanceRef, type Row,
 } from "./shared";
 
 export function RiskCharts({ data, language, sourceRefs = [] }: { data: ModuleReadResponse; language: Language; sourceRefs?: ProvenanceRef[] }) {
@@ -76,6 +76,7 @@ export function RiskCharts({ data, language, sourceRefs = [] }: { data: ModuleRe
       return { name: compactChartLabel(fullName, 18), fullName, ok: counts.ok, breach: counts.breach, unknown: counts.unknown, not_applicable: counts.not_applicable };
     })
     .sort((a, b) => (b.ok + b.breach + b.unknown + b.not_applicable) - (a.ok + a.breach + a.unknown + a.not_applicable));
+  const chartSourceRows = rows.filter((row) => !detailOnlyDimensions.has(String(row.dimension ?? "")));
   const history = ((data.history ?? []) as Array<{ business_date: string; breach_count: number; near_breach_count: number }>)
     .map((entry) => ({ date: entry.business_date, breach: entry.breach_count, near_breach: entry.near_breach_count }));
   const concentrationDimensionLabel = (dimension: string) => dimensionLabels[dimension]?.[language === "en" ? 1 : 0] ?? dimension;
@@ -123,11 +124,11 @@ export function RiskCharts({ data, language, sourceRefs = [] }: { data: ModuleRe
   const concentration = (["SOBSTV", "TABYS"] as const).map((portfolio) => {
     const eligible = rows.filter((row) => row.portfolio_code === portfolio && String(row.dimension ?? "") === selectedConcentrationDimension);
     const withUtilization = eligible.filter((row) => numeric(row.utilization) != null);
-    const top = [...withUtilization]
+    const topSourceRows = [...withUtilization]
       .sort((a, b) => numeric(b.utilization)! - numeric(a.utilization)!)
-      .slice(0, riskConcentrationLimit)
-      .map((row) => ({ name: compactChartLabel(String(row.label ?? ""), 20), fullName: String(row.label ?? ""), value: numeric(row.utilization)! * 100 }));
-    return { portfolio, top, excludedCount: eligible.length - withUtilization.length };
+      .slice(0, riskConcentrationLimit);
+    const top = topSourceRows.map((row) => ({ name: compactChartLabel(String(row.label ?? ""), 20), fullName: String(row.label ?? ""), value: numeric(row.utilization)! * 100 }));
+    return { portfolio, top, topSourceRows, excludedCount: eligible.length - withUtilization.length };
   });
   if (!chartRows.length) return null;
   const concentrationMax = Math.max(0, ...concentration.flatMap((item) => item.top.map((row) => row.value)));
@@ -140,7 +141,7 @@ export function RiskCharts({ data, language, sourceRefs = [] }: { data: ModuleRe
     <ChartCard
       title={l("Лимитные строки по измерению", "Limit lines by dimension")}
       subtitle={l("В пределах лимита, превышения, неопределённые и информационные строки по каждому измерению для обоих портфелей.", "Within-limit, breached, unresolved, and informational lines by dimension across both portfolios.")}
-      basis="source" sourceRefs={sourceRefs}
+      basis="source" sourceRefs={sourceRefsFromRecords(chartSourceRows, language)}
       footer={<ChartLegend items={[
         { label: l("В пределах лимита", "Within limit"), color: COLORS[2] },
         { label: l("Превышение", "Breach"), color: COLORS[4] },
@@ -216,7 +217,7 @@ export function RiskCharts({ data, language, sourceRefs = [] }: { data: ModuleRe
         <p>{l("Использование лимита по выбранному измерению: доля собственного лимита каждой строки, а не доля портфеля. У разных строк может быть разный лимит (например, у одних эмитентов лимит меньше, у других — больше), поэтому длина столбца отражает близость к своему лимиту, а не абсолютный размер позиции.", "Limit utilization for the selected dimension: each row's share of its own limit, not a share of the portfolio. Different rows can have different limits (e.g. some issuers have a smaller cap, others a larger one), so bar length reflects closeness to that row's own limit, not the absolute size of the position.")}</p>
       </div>
       <ChartGrid single={concentration.length < 2}>
-    {concentration.map(({ portfolio, top, excludedCount }) => (
+    {concentration.map(({ portfolio, top, topSourceRows, excludedCount }) => (
       <ChartCard
         key={portfolio}
         title={`${l("Использование лимита по выбранному измерению", "Limit utilization by selected dimension")} · ${portfolio}`}
@@ -225,7 +226,7 @@ export function RiskCharts({ data, language, sourceRefs = [] }: { data: ModuleRe
           : excludedCount > 0
           ? l(`${top.length} крупнейших строк по использованию лимита; ${excludedCount} строк без применимого процента исключены.`, `${top.length} largest lines by limit utilization; ${excludedCount} lines without an applicable percentage are excluded.`)
           : l(`${top.length} крупнейших строк по использованию лимита. Ранжирование отдельно для каждого портфеля.`, `${top.length} largest lines by limit utilization. Ranked independently for each portfolio.`)}
-        basis="source" sourceRefs={sourceRefs}
+        basis="source" sourceRefs={sourceRefsFromRecords(topSourceRows, language)}
       >
         {/* Tight margins so the plot itself fills as much of the card's own
             width as possible, rather than widening the card layout - two
@@ -263,18 +264,17 @@ export function RiskCharts({ data, language, sourceRefs = [] }: { data: ModuleRe
           if (modified == null || limitValue == null) return null;
           const fullName = `${row.portfolio_code ?? ""} · ${row.issuer ?? row.label ?? ""}`;
           return {
-            name: compactChartLabel(fullName, 22), fullName, modified, limit: limitValue,
+            row, name: compactChartLabel(fullName, 22), fullName, modified, limit: limitValue,
             utilization: limitValue !== 0 ? modified / limitValue : 0,
           };
         })
         .filter((row): row is NonNullable<typeof row> => row != null)
         .sort((a, b) => b.utilization - a.utilization)
         .slice(0, 10);
+      const exposureSourceRows = rows.filter((row) => row.dimension === "exposure_detail" && numeric(row.amount_kzt) != null);
       const exposureByCurrency = new Map<string, number>();
-      for (const row of rows) {
-        if (row.dimension !== "exposure_detail") continue;
-        const amount = numeric(row.amount_kzt);
-        if (amount == null) continue;
+      for (const row of exposureSourceRows) {
+        const amount = numeric(row.amount_kzt)!;
         const currency = String(row.currency ?? l("Не указано", "Not specified"));
         exposureByCurrency.set(currency, (exposureByCurrency.get(currency) ?? 0) + amount);
       }
@@ -284,7 +284,7 @@ export function RiskCharts({ data, language, sourceRefs = [] }: { data: ModuleRe
       if (!durationRows.length && exposureRows.length < 2) return null;
       return <ChartGrid single={!durationRows.length || exposureRows.length < 2}>
         {durationRows.length ? (
-          <ChartCard title={l("Контроли дюрации (топ по использованию)", "Duration controls (top by utilization)")} subtitle={l("Модифицированная дюрация против утверждённого лимита по каждой позиции; оба портфеля вместе.", "Modified duration vs. the approved limit per position; both portfolios combined.")} basis="source" sourceRefs={sourceRefs}>
+          <ChartCard title={l("Контроли дюрации (топ по использованию)", "Duration controls (top by utilization)")} subtitle={l("Модифицированная дюрация против утверждённого лимита по каждой позиции; оба портфеля вместе.", "Modified duration vs. the approved limit per position; both portfolios combined.")} basis="source" sourceRefs={sourceRefsFromRecords(durationRows.map((item) => item.row), language)}>
             <ResponsiveContainer width="100%" height={Math.max(240, durationRows.length * 40)}>
               <BarChart data={durationRows} layout="vertical" margin={{ top: 18, right: 10, left: 4, bottom: 8 }}>
                 <CartesianGrid stroke={GRID} strokeDasharray="3 5" horizontal={false}/>
@@ -299,13 +299,13 @@ export function RiskCharts({ data, language, sourceRefs = [] }: { data: ModuleRe
           </ChartCard>
         ) : null}
         {exposureRows.length >= 2 ? (
-          <ChartCard title={l("Валютная экспозиция по валюте", "Currency exposure by currency")} subtitle={l("Сумма из листа «Расшифровка», в KZT; детализация, не лимитная строка.", "Amounts from the exposure-detail sheet, in KZT; informational, not a limit control.")} basis="source" sourceRefs={sourceRefs}>
+          <ChartCard title={l("Валютная экспозиция по валюте", "Currency exposure by currency")} subtitle={l("Сумма из листа «Расшифровка», в KZT; детализация, не лимитная строка.", "Amounts from the exposure-detail sheet, in KZT; informational, not a limit control.")} basis="source" sourceRefs={sourceRefsFromRecords(exposureSourceRows, language)}>
             <ResponsiveContainer width="100%" height={260}>
               <PieChart>
                 <Pie data={exposureRows} dataKey="value" nameKey="name" innerRadius={60} outerRadius={100} isAnimationActive={false}>
                   {exposureRows.map((row, index) => <Cell key={row.name} fill={COLORS[index % COLORS.length]} />)}
                 </Pie>
-                <Tooltip content={<ChartTooltip language={language} valueKind="kzt"/>}/>
+                <Tooltip content={<ChartTooltip language={language} valueKind="kzt" shareOfTotal={exposureRows.reduce((sum, row) => sum + row.value, 0)}/>}/>
                 <Legend iconType="circle"/>
               </PieChart>
             </ResponsiveContainer>

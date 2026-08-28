@@ -22,13 +22,6 @@ from osip_dashboard.ingestion.osip_workbook import (
 WORKBOOK_DIR = Path(__file__).resolve().parents[1] / "Portfolio operations"
 MONEY = Decimal("0.01")
 
-# Real OSIP portfolio workbooks are never committed to this repo (see
-# tests/conftest.py's workbook_paths fixture) - every test in this file
-# parses one directly rather than through that fixture, so skip the whole
-# module up front rather than letting each one crash on a StopIteration.
-if not any(WORKBOOK_DIR.glob("*.xls")):
-    pytest.skip("No local OSIP portfolio workbook - see tests/conftest.py's workbook_paths fixture", allow_module_level=True)
-
 
 @pytest.fixture(scope="module")
 def snapshots():
@@ -273,16 +266,22 @@ def test_parser_tolerates_reordered_business_rows():
     )
 
 
-def test_deposit_closing_on_report_date_fills_in_the_missing_carrying_amount():
-    """The source never fills "Балансовая стоимость" for a deposit - it
-    puts the equivalent figure in a column shared with repo's closing
-    *price* ("Цена закрытия (для репо) / Объем закрытия (для депозита)").
-    Confirmed live on a real dashboard upload: a real overnight deposit
-    (open and close both on the report date) had this exact shape and
-    silently blanked the whole portfolio's derived total before the
-    all-or-nothing Overview fix, then stayed correctly excluded-and-disclosed
-    after it - this test is the actual root-cause fix: recognise the deposit
-    reading of that column so the lot isn't incomplete in the first place."""
+def test_deposit_missing_carrying_amount_borrows_the_purchase_amount():
+    """The source workbook's own "Рыночная стоимость" formula for a
+    deposit never reads the carrying-value column at all - confirmed by
+    recalculating a real upload with LibreOffice (the saved .xls only
+    carries a stale cached result for this formula cell): for a deposit
+    (its own internal type code, BI=5), the formula is
+    =IF(BI=9,"",IF(BI=5,AX+AA,...)) - AX is accrued deposit interest
+    ("Накопленный купон в ТЕНГЕ / Начисленное вознаграждение по
+    депозиту"), AA is the KZT purchase amount ("Объем покупки в
+    тенге"). Mirror that substitution so a deposit with a genuinely
+    blank "Балансовая стоимость" isn't excluded when its purchase
+    amount and accrued interest are both known - regardless of close
+    date, since the workbook's own formula doesn't condition on it
+    either (unlike "Цена закрытия (для репо) / Объем закрытия (для
+    депозита)", a different column entirely, which does hold a future
+    maturity value and was the wrong substitute)."""
     path = next(WORKBOOK_DIR.glob("*СОБСТВ*.xls"))
     rows = [
         list(row) for row in
@@ -296,11 +295,13 @@ def test_deposit_closing_on_report_date_fills_in_the_missing_carrying_amount():
     row = rows[deposit_row_index]
     row[columns["carrying_amount_native"]] = ""
     row[columns["security_type"]] = "депозит"
-    row[columns["close_date"]] = report_date
     row[columns["accrued_income_kzt"]] = ""
-    row[columns["deposit_closing_amount_native"]] = 5_000_000
+    row[columns["purchase_amount_native"]] = 5_000_000
+    # A close date after the report date must not block the substitution -
+    # the workbook's own deposit formula doesn't condition on it at all.
+    row[columns["close_date"]] = date(report_date.year, report_date.month, report_date.day + 1)
 
-    parsed = _parse_rows(rows, path, "synthetic-deposit-closing-on-report-date")
+    parsed = _parse_rows(rows, path, "synthetic-deposit-missing-carrying-amount")
 
     deposit = next(position for position in parsed.positions if position.security_code == "NITCb1")
     assert "carrying_amount_native" not in deposit.unavailable_fields
@@ -308,11 +309,12 @@ def test_deposit_closing_on_report_date_fills_in_the_missing_carrying_amount():
     assert deposit.derived_carrying_value_kzt == Decimal("5000000")
 
 
-def test_deposit_closing_before_report_date_does_not_borrow_the_maturity_value():
-    """A deposit that hasn't closed yet must stay excluded rather than
-    borrowing this column's value - before maturity it's the deposit's full
-    value at close (principal + all future interest, not yet earned), and
-    using it as *today's* carrying value would overstate the portfolio."""
+def test_repo_missing_carrying_amount_does_not_borrow_the_purchase_amount():
+    """The purchase-amount substitution above is specific to the
+    workbook's own deposit branch - a repo row's blank carrying value is
+    a different, unrelated gap (repo's own formula branch reads the
+    carrying-value column directly) and must stay excluded-and-disclosed
+    rather than silently reusing the deposit substitution."""
     path = next(WORKBOOK_DIR.glob("*СОБСТВ*.xls"))
     rows = [
         list(row) for row in
@@ -320,20 +322,18 @@ def test_deposit_closing_before_report_date_does_not_borrow_the_maturity_value()
     ]
     header_index = _find_header_row(rows)
     columns = _resolve_columns(rows[header_index])
-    report_date = _find_report_date(rows[: header_index + 1])
     deposit_row_index = 6
     row = rows[deposit_row_index]
     row[columns["carrying_amount_native"]] = ""
-    row[columns["security_type"]] = "депозит"
-    row[columns["close_date"]] = date(report_date.year, report_date.month, report_date.day + 1)
-    row[columns["deposit_closing_amount_native"]] = 5_000_000
+    row[columns["security_type"]] = "репо"
+    row[columns["purchase_amount_native"]] = 5_000_000
 
-    parsed = _parse_rows(rows, path, "synthetic-deposit-closing-after-report-date")
+    parsed = _parse_rows(rows, path, "synthetic-repo-missing-carrying-amount")
 
-    deposit = next(position for position in parsed.positions if position.security_code == "NITCb1")
-    assert "carrying_amount_native" in deposit.unavailable_fields
-    assert deposit.carrying_amount_native is None
-    assert deposit.derived_carrying_value_kzt is None
+    position = next(position for position in parsed.positions if position.security_code == "NITCb1")
+    assert "carrying_amount_native" in position.unavailable_fields
+    assert position.carrying_amount_native is None
+    assert position.derived_carrying_value_kzt is None
     dq01 = next(issue for issue in parsed.issues if issue.code == "DQ-01" and "NITCb1" in issue.message)
     # Generic message → someone acknowledged and published through it without
     # realizing the cause. The message must point a reviewer at the actual

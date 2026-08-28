@@ -9,7 +9,7 @@ If you just want to open the dashboard and look around, this is the only section
 For someone who does not have Git or does not know how to use it, send them **`get-dashboard.command`** (macOS) or **`get-dashboard.bat`** (Windows). They double-click that one file; it downloads the repository into `Downloads/portfolio-operations-dashboard` (using a GitHub ZIP when Git is unavailable) and starts the dashboard.
 
 1. Download or clone this repository to your computer.
-2. Make sure **Python 3.11 or newer** is installed. If you're not sure, install it from [python.org/downloads](https://www.python.org/downloads/) — on Windows, check "Add python.exe to PATH" during install.
+2. **Python is installed automatically if it's missing** - `start-dashboard.command`/`.bat` detect this themselves and fetch the official CPython build (via Homebrew or python.org on macOS, via winget or python.org on Windows), so you don't need to do this yourself first. If you'd rather install it manually ahead of time, get **Python 3.11 or newer** from [python.org/downloads](https://www.python.org/downloads/) — on Windows, check "Add python.exe to PATH" during install.
 3. Open the project folder and **double-click**:
    - **`start-dashboard.command`** on macOS (first time, right-click it and choose "Open" instead, since it isn't code-signed — macOS will ask you to confirm once).
    - **`start-dashboard.bat`** on Windows.
@@ -499,3 +499,7 @@ Release evidence and external approvals are driven by the
 The single consolidated backlog — open engineering items, the production-readiness
 path, product-scope gaps, and open product decisions, each indexed back to its
 source doc rather than duplicated — is [`docs/todo.md`](docs/todo.md).
+
+How each workbook type is detected on upload, which sheets are required versus
+optional, and which rows/columns each parser reads is documented (in Russian)
+in [`docs/workbook-detection-and-parsing.ru.md`](docs/workbook-detection-and-parsing.ru.md).

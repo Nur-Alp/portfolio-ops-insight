@@ -123,6 +123,15 @@ def _risk_signal(raw: Any, limit_kzt: Any, actual_kzt: Any, limit_usd: Any = Non
     text = _text(raw).upper()
     if text == "OK":
         return "OK"
+    if text == "НЕЙТРАЛЬНО":
+        # The source's own formula (confirmed via LibreOffice recalculation
+        # of a real workbook) is IF(limit-actual=0,"НЕЙТРАЛЬНО",IF(limit-
+        # actual>0,"OK","НАРУШЕН")) - "НЕЙТРАЛЬНО" is the boundary case
+        # where a limit is used up exactly to zero remaining headroom, not
+        # a violation. Not observed in real data yet (every real issuer row
+        # sampled is "OK"), but the generic "any non-OK text is a breach"
+        # rule below would otherwise misclassify it the day it occurs.
+        return "OK"
     if text:
         return "breach"
     limit_value = limit_kzt if limit_kzt not in (None, "") else limit_usd

@@ -123,6 +123,41 @@ it("localizes the operational calculation and its inputs for Russian users", asy
   expect(within(dialog).queryByText(/Operational total combines/)).not.toBeInTheDocument();
 });
 
+const multiRowMetric = {
+  code: "risk_breaches_multi",
+  label: "Breaches (multi-row)",
+  basis: "source" as const,
+  value: "3",
+  explanation: "",
+  source_refs: [
+    { workbook_name: "risk.xls", sheet_name: "Лимит по странам", row_number: 5, parser_version: "v1", source_row_id: "row-1", source_cell: "K5", source_column: 11, source_column_letter: "K", source_kind: "row" as const, field: "label" },
+    { workbook_name: "risk.xls", sheet_name: "Лимит по странам", row_number: 6, parser_version: "v1", source_row_id: "row-2", source_cell: "K6", source_column: 11, source_column_letter: "K", source_kind: "row" as const, field: "label" },
+    { workbook_name: "risk.xls", sheet_name: "Лимит по дюрации", row_number: 20, parser_version: "v1", source_row_id: "row-3", source_cell: "N20", source_column: 14, source_column_letter: "N", source_kind: "row" as const, field: "label" },
+  ]
+};
+
+function MultiRowHarness() {
+  const { open } = useProvenance();
+  return <button type="button" onClick={() => open(multiRowMetric)}>open multi-row</button>;
+}
+
+it("summarizes a metric's many row references into one source-overview row per workbook/sheet/column", async () => {
+  await renderWithProviders(<ProvenanceProvider><MultiRowHarness /></ProvenanceProvider>);
+
+  fireEvent.click(screen.getByRole("button", { name: "open multi-row" }));
+  const dialog = await screen.findByRole("dialog");
+
+  expect(within(dialog).getByText("Source overview")).toBeInTheDocument();
+  // Two rows share risk.xls / Лимит по странам / column K - one overview
+  // row, count 2 - while the third reference (a different sheet/column)
+  // gets its own overview row with count 1.
+  const overviewTable = within(dialog).getByText("Source overview").closest(".drawer-section") as HTMLElement;
+  const countryRow = within(overviewTable).getByText("K (11)").closest("tr") as HTMLElement;
+  expect(within(countryRow).getByText("2")).toBeInTheDocument();
+  const durationRow = within(overviewTable).getByText("N (14)").closest("tr") as HTMLElement;
+  expect(within(durationRow).getByText("1")).toBeInTheDocument();
+});
+
 it("opens aggregate dataset evidence as a source-workbook action", async () => {
   await renderWithProviders(
     <ProvenanceProvider>

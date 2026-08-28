@@ -4,7 +4,9 @@ import { AlertTriangle, ChevronLeft, ChevronRight } from "lucide-react";
 import { dashboardApi } from "../../api/client";
 import type { ModuleReadResponse } from "../../api/types";
 import { EmptyState } from "../../components/ui/AsyncState";
+import { Drawer } from "../../components/ui/Drawer";
 import { Panel } from "../../components/ui/Panel";
+import { SourcePreviewDrawer, type SourceReferenceWithUpload } from "../../components/ui/SourcePreviewDrawer";
 import { SourceRowLegend } from "../../components/ui/SourceRowLegend";
 import { StatusPill } from "../../components/ui/StatusPill";
 import { TableSearch } from "../../components/ui/TableSearch";
@@ -12,14 +14,15 @@ import { formatDate, formatKzt } from "../../lib/format";
 import { useScrollAnchor } from "../../hooks/useScrollAnchor";
 import { ACCOUNTING_DATASET_TYPE_LABELS, DatasetVersionPicker, displayValue, SourceCell, STANDARD_TABLE_PAGE_SIZE, type Row } from "./shared";
 
-export type IncomeStatementPeriod = "quarter" | "ytd";
+export type IncomeStatementPeriod = "quarter" | "ytd" | "monthly";
 
-// Only "Квартал"/"YTD" - the income statement source workbook carries
-// exactly these two columns per line (quarter_kzt/ytd_kzt), plus their
-// prior-year counterparts. There is no monthly column anywhere in this
-// dataset, and "Год" isn't a distinct figure from YTD (YTD *is* the
-// year-to-date total) - a Month or Year option here would have nothing
-// real to switch to.
+// "Квартал"/"YTD" cover the income statement source workbook's own two
+// columns per line (quarter_kzt/ytd_kzt), plus their prior-year
+// counterparts. "Monthly" is a different dataset entirely - the budget
+// workbook's Jan-Dec columns (see accounting.py's month_01_kzt.._12_kzt) -
+// so selecting it swaps the income-statement panel below for a dedicated
+// monthly view rather than trying to force a matching field out of the
+// income-statement records, which have no such column.
 export function AccountingPeriodToggle({ value, onChange, language }: { value: IncomeStatementPeriod; onChange: (value: IncomeStatementPeriod) => void; language: "ru" | "en" }) {
   const l = (ru: string, en: string) => language === "en" ? en : ru;
   return <label className="topbar-period-picker" title={l("Отчёт о прибылях и убытках", "Income statement")}>
@@ -27,8 +30,170 @@ export function AccountingPeriodToggle({ value, onChange, language }: { value: I
     <select value={value} onChange={(event) => onChange(event.target.value as IncomeStatementPeriod)}>
       <option value="quarter">{l("За квартал", "Quarter")}</option>
       <option value="ytd">{l("С начала года (YTD)", "Year to date (YTD)")}</option>
+      <option value="monthly">{l("По месяцам", "Monthly")}</option>
     </select>
   </label>;
+}
+
+type BalanceSheetLineSourceRef = { sheet_name?: string | null; row_number?: number | null; source_cell?: string | null; filename?: string | null } | null;
+
+type LineContributor = {
+  kind: "line";
+  sign: "+" | "-";
+  line_code: string | null;
+  line_label: string | null;
+  current_period_kzt: string | null;
+  prior_period_kzt: string | null;
+  id: string | null;
+  source: BalanceSheetLineSourceRef;
+};
+type RowContributor = {
+  kind: "row";
+  sign: "+" | "-";
+  label_ru: string;
+  label_en: string;
+  current_period_kzt: string | null;
+  prior_period_kzt: string | null;
+};
+type Contributor = LineContributor | RowContributor;
+
+type BalanceSheetDerivation = {
+  kind: "sum_of_lines" | "total_minus_lines" | "source_total_line" | "sum_of_rows_above";
+  formula_ru: string;
+  formula_en: string;
+  contributors: Contributor[];
+  source_total_line?: LineContributor | null;
+  source_total_current_period_kzt?: string | null;
+  source_total_prior_period_kzt?: string | null;
+};
+
+type CondensedBalanceSheetRow = {
+  group: "asset" | "liability" | "equity" | "total";
+  is_total: boolean;
+  label_ru: string;
+  label_en: string;
+  current_period_kzt: string | null;
+  prior_period_kzt: string | null;
+  reconciles?: boolean;
+  derivation?: BalanceSheetDerivation;
+};
+
+// Rolls up the full ~60-line statutory balance sheet (f1_uip) into the
+// same 13-row grouping the budget workbook's own "БАЛАНС" section uses
+// (see backend's condensed_balance_sheet) - the bridge that finally lets
+// an actual-vs-budget comparison exist on the balance sheet, which
+// AccountingComparabilityNotice above already discloses is otherwise
+// missing. The full ~60-line detail table was retired (this rollup is what
+// readers actually want); the line-by-line data is still available via the
+// "Data export" panel's Excel download further down the page.
+export function AccountingManagementBalancePanel({ data, language }: { data: ModuleReadResponse; language: "ru" | "en" }) {
+  const l = (ru: string, en: string) => language === "en" ? en : ru;
+  const rows = ((data.records as Record<string, CondensedBalanceSheetRow[]>).accounting_balance_sheet_summary ?? []);
+  const [selectedRow, setSelectedRow] = useState<CondensedBalanceSheetRow | null>(null);
+  if (!rows.length) return null;
+  const equityTotal = rows.find((row) => row.group === "total" && row.reconciles !== undefined);
+  return <>
+    <Panel title={l("Управленческий баланс", "Management balance sheet")} subtitle={l("Тот же баланс, сгруппированный в те же категории, что и раздел «Баланс» бюджетной книги - для сравнения факта с бюджетом. Построчная форма доступна в выгрузке в Excel. Нажмите на строку, чтобы увидеть формулу расчёта.", "The same balance sheet, grouped into the same categories as the budget workbook's own \"Баланс\" section - so it can be compared against budget. The line-by-line form is available in the Excel export. Click a row to see how its value was derived.")}>
+      <div className="table-scroll" tabIndex={0}>
+        <table>
+          <thead><tr><th>{l("Статья", "Line")}</th><th>{l("На отчётную дату", "As of report date")}</th><th>{l("На начало года", "At year start")}</th></tr></thead>
+          <tbody>{rows.map((row, index) => <tr
+            key={`${row.label_ru}-${index}`}
+            className={`management-balance-row${row.is_total ? " management-balance-row--total" : ""}${row.derivation ? " management-balance-row--clickable" : ""}`}
+            tabIndex={row.derivation ? 0 : undefined}
+            role={row.derivation ? "button" : undefined}
+            aria-label={row.derivation ? l(`Показать формулу для «${row.label_ru}»`, `Show the formula for "${row.label_en}"`) : undefined}
+            onClick={row.derivation ? () => setSelectedRow(row) : undefined}
+            onKeyDown={row.derivation ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedRow(row); } } : undefined}
+          >
+            <td>{row.is_total ? <strong>{l(row.label_ru, row.label_en)}</strong> : l(row.label_ru, row.label_en)}</td>
+            <td>{row.is_total ? <strong>{displayValue("current_period_kzt", row.current_period_kzt, language)}</strong> : displayValue("current_period_kzt", row.current_period_kzt, language)}</td>
+            <td>{row.is_total ? <strong>{displayValue("prior_period_kzt", row.prior_period_kzt, language)}</strong> : displayValue("prior_period_kzt", row.prior_period_kzt, language)}</td>
+          </tr>)}</tbody>
+        </table>
+      </div>
+      {equityTotal && equityTotal.reconciles === false ? <p className="unavailable-note">{l("Сумма трёх строк капитала не сходится с итогом «Итого капитал» источника - вероятно, в балансе есть ненулевая строка капитала вне этих трёх категорий.", "The sum of the three equity lines doesn't tie to the source's own \"Итого капитал\" total - the balance sheet likely carries a nonzero equity line outside these three categories.")}</p> : null}
+    </Panel>
+    <ManagementBalanceRowDrawer row={selectedRow} language={language} onClose={() => setSelectedRow(null)} />
+  </>;
+}
+
+const DERIVATION_KIND_LABEL: Record<BalanceSheetDerivation["kind"], { ru: string; en: string }> = {
+  sum_of_lines: { ru: "Сумма строк источника", en: "Sum of source lines" },
+  total_minus_lines: { ru: "Итог источника минус строки", en: "Source total minus lines" },
+  source_total_line: { ru: "Значение читается напрямую из источника", en: "Read directly from the source" },
+  sum_of_rows_above: { ru: "Сумма строк таблицы выше", en: "Sum of the table rows above" },
+};
+
+function ManagementBalanceRowDrawer({ row, language, onClose }: { row: CondensedBalanceSheetRow | null; language: "ru" | "en"; onClose: () => void }) {
+  const l = (ru: string, en: string) => language === "en" ? en : ru;
+  const [previewReference, setPreviewReference] = useState<SourceReferenceWithUpload | null>(null);
+  const derivation = row?.derivation;
+  const renderContributor = (contributor: Contributor, key: string) => {
+    const signLabel = contributor.sign === "-" ? "−" : "+";
+    if (contributor.kind === "row") {
+      // A reference to another rollup row already visible in the table above
+      // (e.g. ИТОГО СОБСТВЕННЫЙ КАПИТАЛ referencing "Уставный капитал") -
+      // not a raw source line, so there is no single cell to open here;
+      // click that row itself in the table for its own breakdown.
+      return <div className="evidence-row" key={key}>
+        <strong>{signLabel} {l(contributor.label_ru, contributor.label_en)}</strong>
+        <span>{l("Строка управленческого баланса", "Management balance sheet row")} · {displayValue("current_period_kzt", contributor.current_period_kzt, language)}</span>
+      </div>;
+    }
+    const canPreview = Boolean(contributor.id && contributor.source?.source_cell);
+    const content = <>
+      <strong>{signLabel} {contributor.line_code ? `${contributor.line_code}. ` : ""}{contributor.line_label ?? l("Без наименования", "Unlabeled")}</strong>
+      <span>
+        {contributor.source?.sheet_name ?? "f1_uip"}
+        {contributor.source?.source_cell ? ` · ${l("ячейка", "cell")} ${contributor.source.source_cell}` : ""}
+        {` · ${displayValue("current_period_kzt", contributor.current_period_kzt, language)}`}
+      </span>
+    </>;
+    if (!canPreview) return <div className="evidence-row" key={key}>{content}</div>;
+    return <button
+      type="button"
+      className="evidence-row evidence-row--button"
+      key={key}
+      onClick={() => setPreviewReference({
+        source_kind: "row",
+        source_row_id: contributor.id!,
+        source_cell: contributor.source!.source_cell!,
+        sheet_name: contributor.source?.sheet_name ?? "f1_uip",
+        workbook_name: contributor.source?.filename ?? "",
+        parser_version: "",
+        field: "line_label",
+      })}
+      aria-label={l(`Открыть ячейку ${contributor.source?.source_cell}`, `Open cell ${contributor.source?.source_cell}`)}
+    >
+      {content}
+    </button>;
+  };
+  return <>
+    <Drawer open={Boolean(row)} onClose={onClose} title={row ? l(row.label_ru, row.label_en) : ""} subtitle={l("Как рассчитано значение", "How this value was derived")}>
+      {row && derivation ? <div className="drawer-stack provenance-drawer">
+        <div className="drawer-summary">
+          <div><span>{l("На отчётную дату", "As of report date")}</span><strong>{displayValue("current_period_kzt", row.current_period_kzt, language)}</strong></div>
+          <div><span>{l("На начало года", "At year start")}</span><strong>{displayValue("prior_period_kzt", row.prior_period_kzt, language)}</strong></div>
+        </div>
+        <div className="drawer-section">
+          <h3>{l(DERIVATION_KIND_LABEL[derivation.kind].ru, DERIVATION_KIND_LABEL[derivation.kind].en)}</h3>
+          <p>{l("Каждая строка ниже - переменная в формуле: её значение, происхождение (строка/ячейка источника или другая строка этой же таблицы) и знак, с которым она входит в сумму.", "Every row below is a variable in the formula: its value, where it comes from (a source line/cell, or another row of this same table), and the sign it enters the sum with.")}</p>
+          <span className="provenance-formula-label">{l("Формула", "Formula")}</span>
+          <code className="provenance-formula">{l(derivation.formula_ru, derivation.formula_en)}</code>
+        </div>
+        <div className="drawer-section">
+          <h3>{l("Переменные", "Variables")}</h3>
+          <div className="provenance-refs">{derivation.contributors.map((contributor, index) => renderContributor(contributor, `${contributor.kind}-${index}`))}</div>
+        </div>
+        {row.reconciles === false && derivation.source_total_current_period_kzt !== undefined ? <div className="drawer-section">
+          <h3>{l("Сверка с источником", "Reconciliation against the source")}</h3>
+          <p>{l(`Источник указывает «Итого капитал» = ${displayValue("current_period_kzt", derivation.source_total_current_period_kzt ?? null, language)}, что не совпадает с суммой трёх строк выше. Вероятно, в балансе есть ненулевая строка капитала вне этих трёх категорий.`, `The source's own "Итого капитал" total is ${displayValue("current_period_kzt", derivation.source_total_current_period_kzt ?? null, language)}, which does not match the sum of the three rows above. The balance sheet likely carries a nonzero equity line outside these three categories.`)}</p>
+        </div> : null}
+      </div> : null}
+    </Drawer>
+    <SourcePreviewDrawer reference={previewReference} onClose={() => setPreviewReference(null)} />
+  </>;
 }
 
 export function AccountingComparabilityNotice({ language }: { language: "ru" | "en" }) {
@@ -71,6 +236,37 @@ export function AccountingBudgetSectionPanel({ data, language, section }: { data
   const [titleRu, titleEn] = ACCOUNTING_BUDGET_SECTION_LABELS[section];
   return <Panel title={l(titleRu, titleEn)} subtitle={l(`Показано ${visibleRows.length} из ${records.length} строк; годы 2023-2025 и прогноз 2025, без данных за 2026 год - именно то, что содержит источник. Каждая строка сохраняет ссылку на исходную рабочую книгу.`, `${visibleRows.length} of ${records.length} rows shown; 2023-2025 and a 2025 forecast, no 2026 data - exactly what the source contains. Every row retains a source-workbook reference.`)} action={records.length ? <div className="table-tools"><TableSearch label={l("Поиск строк отчётности", "Search statement rows")} placeholder={l("Код, статья, раздел", "Code, line, section")} /><SourceRowLegend language={language} /></div> : undefined}>
     {records.length ? <><div className="table-scroll" tabIndex={0}><table><thead><tr><th>{l("Статья", "Line")}</th><th>2023</th><th>2024</th><th>{l("Бюджет 9М 2025", "Budget 9M 2025")}</th><th>{l("Факт 9М 2025", "Actual 9M 2025")}</th><th>{l("Бюджет 2025", "Budget 2025")}</th><th>{l("Окт 2025", "Oct 2025")}</th><th>{l("Ноя 2025", "Nov 2025")}</th><th>{l("Дек 2025", "Dec 2025")}</th><th>{l("Прогноз 2025", "Forecast 2025")}</th><th>{l("% исполнения", "% execution")}</th><th>{l("Отклонение", "Deviation")}</th><th>{l("Источник", "Source")}</th></tr></thead><tbody>{visibleRows.map((row, index) => <tr key={String(row.id ?? index)}><td>{displayValue("line_label", row.line_label, language)}</td><td>{displayValue("year_2023_kzt", row.year_2023_kzt, language)}</td><td>{displayValue("year_2024_kzt", row.year_2024_kzt, language)}</td><td>{displayValue("budget_9m_2025_kzt", row.budget_9m_2025_kzt, language)}</td><td>{displayValue("actual_9m_2025_kzt", row.actual_9m_2025_kzt, language)}</td><td>{displayValue("budget_2025_kzt", row.budget_2025_kzt, language)}</td><td>{displayValue("oct_2025_kzt", row.oct_2025_kzt, language)}</td><td>{displayValue("nov_2025_kzt", row.nov_2025_kzt, language)}</td><td>{displayValue("dec_2025_kzt", row.dec_2025_kzt, language)}</td><td>{displayValue("forecast_2025_kzt", row.forecast_2025_kzt, language)}</td><td>{displayValue("execution_pct", row.execution_pct, language)}</td><td>{displayValue("deviation_kzt", row.deviation_kzt, language)}</td><SourceCell row={row} language={language} /></tr>)}</tbody></table></div><div className="table-pagination" ref={pagination.ref}><span>{l(`Страница ${currentPage + 1} из ${pageCount} · ${pageSize} строк на странице`, `Page ${currentPage + 1} of ${pageCount} · ${pageSize} rows per page`)}</span><label className="table-pagination__jump"><span>{l("Перейти", "Go to")}</span><select aria-label={l("Выбрать страницу", "Choose page")} value={currentPage} onChange={(event) => { pagination.anchor(); setPage(Number(event.target.value)); }}>{Array.from({ length: pageCount }, (_, index) => <option key={index} value={index}>{index + 1}</option>)}</select></label><div><button className="icon-button" type="button" aria-label={l("Предыдущая страница", "Previous page")} disabled={currentPage === 0} onClick={() => { pagination.anchor(); setPage((value) => Math.max(0, value - 1)); }}><ChevronLeft aria-hidden="true" /></button><button className="icon-button" type="button" aria-label={l("Следующая страница", "Next page")} disabled={currentPage >= pageCount - 1} onClick={() => { pagination.anchor(); setPage((value) => Math.min(pageCount - 1, value + 1)); }}><ChevronRight aria-hidden="true" /></button></div></div></> : <EmptyState title={l("Нет данных в источнике", "No data in the source")} detail={section === "cash_flow" ? l("Лист движения денежных средств в бюджетной книге пока не заполнен - раздел появится сам, как только источник получит значения.", "The cash-flow sheet in the budget workbook has not been filled in yet - this section will populate itself once the source has values.") : l("Опубликованный бюджет не содержит строк этого раздела.", "The published budget contains no rows for this section.")} />}
+  </Panel>;
+}
+
+export const MONTH_SHORT_LABELS: Array<[string, string]> = [
+  ["Янв", "Jan"], ["Фев", "Feb"], ["Мар", "Mar"], ["Апр", "Apr"], ["Май", "May"], ["Июн", "Jun"],
+  ["Июл", "Jul"], ["Авг", "Aug"], ["Сен", "Sep"], ["Окт", "Oct"], ["Ноя", "Nov"], ["Дек", "Dec"],
+];
+export const MONTH_FIELD_KEYS = [
+  "month_01_kzt", "month_02_kzt", "month_03_kzt", "month_04_kzt", "month_05_kzt", "month_06_kzt",
+  "month_07_kzt", "month_08_kzt", "month_09_kzt", "month_10_kzt", "month_11_kzt", "month_12_kzt",
+];
+
+const ACCOUNTING_MONTHLY_SECTION_LABELS: Record<string, [string, string]> = {
+  income_statement: ["Доходы и расходы по месяцам", "Income and expenses by month"],
+  cash_flow: ["Движение денежных средств по месяцам", "Cash flow by month"],
+  balance: ["Баланс по месяцам", "Balance by month"],
+};
+
+// A separate table from AccountingBudgetSectionPanel above, not a Monthly
+// view of the same rows - some lines have monthly figures but no summary
+// figures at all (the cash-flow section's summary columns are genuinely
+// blank in the source; see accounting.py's _parse_accounting_budget), so
+// filtering here on "has monthly data" surfaces rows the 9M table omits
+// entirely, and vice versa.
+export function AccountingMonthlyPanel({ data, language, section }: { data: ModuleReadResponse; language: "ru" | "en"; section: "income_statement" | "cash_flow" | "balance" }) {
+  const l = (ru: string, en: string) => language === "en" ? en : ru;
+  const allRecords = ((data.records as Record<string, Row[]>).accounting_budget ?? []);
+  const records = allRecords.filter((row) => row.section === section && MONTH_FIELD_KEYS.some((field) => row[field] != null && row[field] !== ""));
+  const [titleRu, titleEn] = ACCOUNTING_MONTHLY_SECTION_LABELS[section];
+  return <Panel title={l(titleRu, titleEn)} subtitle={l(`${records.length} строк с данными по месяцам; лист «Бюджет» бюджетной рабочей книги, полная таблица «Январь-Декабрь». Каждая строка сохраняет ссылку на исходную ячейку.`, `${records.length} rows with monthly data; from the "Бюджет" sheet of the budget workbook, the full "January-December" table. Every row retains a source-cell reference.`)} action={records.length ? <div className="table-tools"><TableSearch label={l("Поиск строк отчётности", "Search statement rows")} placeholder={l("Код, статья, раздел", "Code, line, section")} /><SourceRowLegend language={language} /></div> : undefined}>
+    {records.length ? <div className="table-scroll" tabIndex={0}><table><thead><tr><th>{l("Статья", "Line")}</th>{MONTH_SHORT_LABELS.map(([ru, en]) => <th key={ru}>{l(ru, en)}</th>)}<th>{l("Источник", "Source")}</th></tr></thead><tbody>{records.map((row, index) => <tr key={String(row.id ?? index)}><td>{displayValue("line_label", row.line_label, language)}</td>{MONTH_FIELD_KEYS.map((field) => <td key={field}>{displayValue(field, row[field], language)}</td>)}<SourceCell row={row} language={language} /></tr>)}</tbody></table></div> : <EmptyState title={l("Нет данных в источнике", "No data in the source")} detail={l("Помесячные колонки этого раздела в бюджетной книге пока не заполнены.", "This section's monthly columns in the budget workbook have not been filled in yet.")} />}
   </Panel>;
 }
 
@@ -169,7 +365,7 @@ export function AccountingIncomeStatementPanel({ data, language }: { data: Modul
   const pageCount = Math.max(1, Math.ceil(records.length / pageSize));
   const currentPage = Math.min(page, pageCount - 1);
   const visibleRows = records.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
-  return <Panel title={l("Отчёт о прибылях и убытках", "Income statement")} subtitle={l(`Показано ${visibleRows.length} из ${records.length} строк; каждая строка сохраняет ссылку на исходную рабочую книгу.`, `${visibleRows.length} of ${records.length} rows shown; every row retains a source-workbook reference.`)} action={records.length ? <div className="table-tools"><TableSearch label={l("Поиск строк отчёта о прибылях и убытках", "Search income-statement rows")} placeholder={l("Код, статья, раздел", "Code, line, section")} /><SourceRowLegend language={language} /></div> : undefined}>
+  return <Panel title={l("Отчёт о прибылях и убытках", "Income statement")} subtitle={l(`Построчные статьи доходов и расходов из f2_uip: код, сумма за квартал и с начала года, плюс те же показатели за аналогичный период прошлого года. Показано ${visibleRows.length} из ${records.length} строк; каждая строка сохраняет ссылку на исходную рабочую книгу.`, `Line-by-line income/expense items from f2_uip: code, quarter and year-to-date amounts, plus the same two figures for the same period last year. ${visibleRows.length} of ${records.length} rows shown; every row retains a source-workbook reference.`)} action={records.length ? <div className="table-tools"><TableSearch label={l("Поиск строк отчёта о прибылях и убытках", "Search income-statement rows")} placeholder={l("Код, статья, раздел", "Code, line, section")} /><SourceRowLegend language={language} /></div> : undefined}>
     {records.length ? <><div className="table-scroll" tabIndex={0}><table><thead><tr><th>{l("Код строки", "Line code")}</th><th>{l("Наименование статьи", "Line label")}</th><th>{l("За отчетный квартал", "Quarter")}</th><th>{l("С начала года", "YTD")}</th><th>{l("Аналог. квартал пред. года", "Prior-year quarter")}</th><th>{l("С начала пред. года", "Prior-year YTD")}</th><th>{l("Источник", "Source")}</th></tr></thead><tbody>{visibleRows.map((row, index) => <tr key={String(row.id ?? index)}><td>{displayValue("line_code", row.line_code, language)}</td><td>{displayValue("line_label", row.line_label, language)}</td><td>{displayValue("quarter_kzt", row.quarter_kzt, language)}</td><td>{displayValue("ytd_kzt", row.ytd_kzt, language)}</td><td>{displayValue("prior_quarter_kzt", row.prior_quarter_kzt, language)}</td><td>{displayValue("prior_ytd_kzt", row.prior_ytd_kzt, language)}</td><SourceCell row={row} language={language} /></tr>)}</tbody></table></div><div className="table-pagination" ref={pagination.ref}><span>{l(`Страница ${currentPage + 1} из ${pageCount} · ${pageSize} строк на странице`, `Page ${currentPage + 1} of ${pageCount} · ${pageSize} rows per page`)}</span><label className="table-pagination__jump"><span>{l("Перейти", "Go to")}</span><select aria-label={l("Выбрать страницу", "Choose page")} value={currentPage} onChange={(event) => { pagination.anchor(); setPage(Number(event.target.value)); }}>{Array.from({ length: pageCount }, (_, index) => <option key={index} value={index}>{index + 1}</option>)}</select></label><div><button className="icon-button" type="button" aria-label={l("Предыдущая страница", "Previous page")} disabled={currentPage === 0} onClick={() => { pagination.anchor(); setPage((value) => Math.max(0, value - 1)); }}><ChevronLeft aria-hidden="true" /></button><button className="icon-button" type="button" aria-label={l("Следующая страница", "Next page")} disabled={currentPage >= pageCount - 1} onClick={() => { pagination.anchor(); setPage((value) => Math.min(pageCount - 1, value + 1)); }}><ChevronRight aria-hidden="true" /></button></div></div></> : <EmptyState title={l("Отчёт не найден", "No income statement found")} detail={l("В опубликованном источнике нет строк отчёта о прибылях и убытках.", "The published source has no income-statement rows.")} />}
   </Panel>;
 }

@@ -119,12 +119,37 @@ def start(port: int) -> int:
             start_new_session=True,
         )
 
-    # Workbook import happens during startup. Detect immediate failures (for
-    # example, an occupied port) before claiming that the browser can connect.
-    time.sleep(1)
-    if process.poll() is not None:
-        print(f"Demo failed to start. See {LOG_PATH}", file=sys.stderr)
+    # Workbook import and demo-data seeding happen during startup, before
+    # the process ever attempts to bind `port` - on a fresh checkout (no
+    # database yet) that alone can take well over a second. A short fixed
+    # sleep followed by a bare `process.poll()` check declared success
+    # while the process was still busy seeding, long before it had even
+    # tried (and possibly failed) to bind the port - confirmed once: the
+    # process later died on an actual bind conflict, after this function
+    # had already written its PID to PID_PATH and reported success, and
+    # the caller's own /health check then coincidentally hit a *different*
+    # process already listening on the same port instead. Poll for the
+    # real outcome instead: either the process exits (a genuine startup
+    # failure, e.g. the port is held by something unrelated to this app)
+    # or it actually starts answering /health - whichever happens first.
+    deadline = time.monotonic() + 60.0
+    started_ok = False
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            break
+        if _port_responds(port):
+            started_ok = True
+            break
+        time.sleep(0.2)
+
+    if not started_ok:
+        if process.poll() is None:
+            # Still alive but never answered in time - don't leave an
+            # orphaned, port-less process running in the background.
+            process.terminate()
+        print(f"Demo failed to start on port {port}. See {LOG_PATH}", file=sys.stderr)
         return 1
+
     PID_PATH.write_text(
         json.dumps({"pid": process.pid, "port": port}) + "\n", encoding="utf-8"
     )

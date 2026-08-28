@@ -1,14 +1,7 @@
 from pathlib import Path
 
-import pytest
-
 
 WORKBOOK_DIR = Path(__file__).resolve().parents[1] / "Portfolio operations"
-
-# See tests/conftest.py's workbook_paths fixture - no real OSIP portfolio
-# workbook is committed to this repo.
-if not any(WORKBOOK_DIR.glob("*.xls")):
-    pytest.skip("No local OSIP portfolio workbook - see tests/conftest.py's workbook_paths fixture", allow_module_level=True)
 
 
 ACTOR = {

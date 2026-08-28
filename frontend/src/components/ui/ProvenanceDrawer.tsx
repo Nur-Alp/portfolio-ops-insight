@@ -148,6 +148,7 @@ export function ProvenanceDrawer({ metric, onClose }: { metric: Provenance | nul
   const identityRefs = allRefs.filter((ref) => ref.source_kind === "dataset");
   const refs = allRefs.filter((ref) => ref.source_kind !== "dataset");
   const shownRefs = showAll ? refs : refs.slice(0, 40);
+  const sourceOverview = summarizeSourceColumns(refs);
   const renderRef = (ref: SourceReference, key: string) => {
     const aggregateRef = ref as AggregateReference;
     const remaining = aggregateRef.remaining_rows;
@@ -207,6 +208,16 @@ export function ProvenanceDrawer({ metric, onClose }: { metric: Provenance | nul
           <p>{l("Определяет рабочую книгу и версию набора, лежащие в основе показателя. У записи нет одной ячейки — она не открывается для предпросмотра значения.", "Identifies the workbook and dataset version behind this metric. It has no single cell, so it does not open a value preview.")}</p>
           <div className="provenance-refs">{displayedIdentityRefs}</div>
         </div> : null}
+        {sourceOverview.length ? <div className="drawer-section">
+          <h3>{l("Обзор источника", "Source overview")}</h3>
+          <p>{l("Из каких рабочих книг, листов и столбцов взяты значения ниже - по одной строке на каждое уникальное сочетание.", "Which workbooks, sheets, and columns the references below come from - one row per unique combination.")}</p>
+          <div className="table-scroll" tabIndex={0}>
+            <table>
+              <thead><tr><th>{l("Рабочая книга", "Workbook")}</th><th>{l("Лист", "Sheet")}</th><th>{l("Столбец", "Column")}</th><th>{l("Строк", "Rows")}</th></tr></thead>
+              <tbody>{sourceOverview.map((group) => <tr key={`${group.workbook}-${group.sheet}-${group.columnLetter ?? "none"}`}><td>{group.workbook}</td><td>{group.sheet}</td><td>{group.columnLetter ? `${group.columnLetter}${group.column != null ? ` (${group.column})` : ""}` : l("не одна ячейка", "no single cell")}</td><td>{group.count}</td></tr>)}</tbody>
+            </table>
+          </div>
+        </div> : null}
         <div className="drawer-section">
           <h3>{l("Точные ссылки на рабочую книгу", "Exact workbook references")}</h3>
           {refs.length ? <>
@@ -220,6 +231,28 @@ export function ProvenanceDrawer({ metric, onClose }: { metric: Provenance | nul
       <SourcePreviewDrawer reference={previewReference} onClose={() => setPreviewReference(null)} />
     </>
   );
+}
+
+type SourceColumnGroup = { workbook: string; sheet: string; columnLetter: string | null; column: number | null; count: number };
+
+// A metric can carry dozens of near-identical row references (one per
+// source row) - useful for opening a specific cell, but tedious for
+// answering "which workbook/sheet/column is this even from" without
+// scrolling through all of them. This collapses that same list into one
+// row per unique (workbook, sheet, column) combination instead.
+function summarizeSourceColumns(refs: SourceReference[]): SourceColumnGroup[] {
+  const groups = new Map<string, SourceColumnGroup>();
+  for (const ref of refs) {
+    const workbook = ref.workbook_name ?? "—";
+    const sheet = ref.sheet_name ?? "—";
+    const columnLetter = ref.source_column_letter ?? null;
+    const column = ref.source_column ?? null;
+    const key = `${workbook} ${sheet} ${columnLetter ?? ""}`;
+    const existing = groups.get(key);
+    if (existing) existing.count += 1;
+    else groups.set(key, { workbook, sheet, columnLetter, column, count: 1 });
+  }
+  return [...groups.values()].sort((a, b) => b.count - a.count);
 }
 
 function sourceLocation(ref: NonNullable<Provenance["source_refs"]>[number], language: "ru" | "en") {

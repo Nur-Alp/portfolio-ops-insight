@@ -285,37 +285,56 @@ def test_derive_expected_coupon_native_matches_real_osip_recalculation():
     # Regression fixture: values below are exactly what LibreOffice computes
     # when it recalculates OSIP's own (broken-cache) formula for these real
     # SOBSTV workbook rows - confirmed by converting the actual .xls with
-    # headless LibreOffice and reading back column AN. A bond pays
-    # nominal x rate / frequency per coupon (frequency = payments/year,
-    # inferred from the period length), not a pro-rata slice of the exact
-    # calendar days in that period - that's why an earlier actual/365
-    # version of this function was consistently ~0.3-0.8% off on anything
-    # but an annual bond.
+    # headless LibreOffice and reading back column AS. The source's own
+    # formula branches on the real "Купоннный период" (coupon period, in
+    # days) column directly: /2 for a 180-day period, unchanged for 360,
+    # /12 for 30, /4 for 90, and a pro-rata nominal*qty*rate/365*period
+    # fallback for anything else (a "stub" period - see the stub-period
+    # test below). An earlier version of this function *inferred* a
+    # payment frequency from the calendar gap between coupon dates instead
+    # of reading the period directly - that happened to match for these
+    # four standard periods (rounding near 180/360/30/90 lands on the same
+    # fraction either way) but silently diverged on a real stub period.
     annual = SimpleNamespace(
         coupon_or_repo_rate=Decimal("0.095"), nominal_value=Decimal("1000"), quantity=Decimal("416452"),
-        previous_coupon_date=date(2025, 12, 14), next_coupon_date=date(2026, 12, 14),
+        coupon_period_days=Decimal("360"), coupon_indexation=Decimal("1"),
     )
     assert _derive_expected_coupon_native(annual) == Decimal("39562940.000")
 
     semi_annual = SimpleNamespace(
         coupon_or_repo_rate=Decimal("0.19"), nominal_value=Decimal("1000"), quantity=Decimal("400000"),
-        previous_coupon_date=date(2026, 6, 27), next_coupon_date=date(2026, 12, 27),
+        coupon_period_days=Decimal("180"), coupon_indexation=Decimal("1"),
     )
     assert _derive_expected_coupon_native(semi_annual) == Decimal("38000000.0")
 
     quarterly = SimpleNamespace(
         coupon_or_repo_rate=Decimal("0.23"), nominal_value=Decimal("10000"), quantity=Decimal("9926"),
-        previous_coupon_date=date(2026, 5, 14), next_coupon_date=date(2026, 8, 14),
+        coupon_period_days=Decimal("90"), coupon_indexation=Decimal("1"),
     )
     assert _derive_expected_coupon_native(quarterly) == Decimal("5707450.00")
 
 
-def test_derive_expected_coupon_native_requires_both_coupon_dates():
-    # A first coupon with no prior date has no period to derive from - must
-    # not guess one rather than silently fabricating a number.
+def test_derive_expected_coupon_native_handles_a_real_stub_period():
+    # Regression: ASDBe25, a real ADB bond in a live SOBSTV workbook, has a
+    # 211-day first coupon period (neither 180/360/30/90). The old
+    # date-gap-inferred-frequency version rounded 211 days to a semi-annual
+    # (frequency=2) schedule and understated this lot's expected coupon by
+    # 13.5% (3.49M KZT) versus what LibreOffice's live recalculation of
+    # OSIP's own formula gives - confirmed on the real cell.
+    stub = SimpleNamespace(
+        coupon_or_repo_rate=Decimal("0.149"), nominal_value=Decimal("1"), quantity=Decimal("300000000"),
+        coupon_period_days=Decimal("211"), coupon_indexation=Decimal("1"),
+    )
+    assert _derive_expected_coupon_native(stub) == Decimal("25840273.972602739726027397") \
+        or abs(_derive_expected_coupon_native(stub) - Decimal("25840273.97")) < Decimal("0.01")
+
+
+def test_derive_expected_coupon_native_requires_a_coupon_period():
+    # A first coupon with no recorded period has no basis to derive from -
+    # must not guess one rather than silently fabricating a number.
     lot = SimpleNamespace(
         coupon_or_repo_rate=Decimal("0.095"), nominal_value=Decimal("1000"), quantity=Decimal("2"),
-        previous_coupon_date=None, next_coupon_date=date(2026, 12, 14),
+        coupon_period_days=None, coupon_indexation=Decimal("1"),
     )
     assert _derive_expected_coupon_native(lot) is None
 
@@ -326,7 +345,7 @@ def test_expected_cash_flow_rows_fall_back_to_derived_coupon_when_source_blank()
         isin="COUPON-ISIN", security_code="BOND", close_date=None,
         next_coupon_date=date(2026, 6, 1), instrument_currency="KZT",
         coupon_or_repo_rate=Decimal("0.1"), nominal_value=Decimal("1000"), quantity=Decimal("1"),
-        previous_coupon_date=date(2025, 12, 1), source_row=None,
+        coupon_period_days=Decimal("182"), coupon_indexation=Decimal("1"), source_row=None,
     )
     rows = _expected_cash_flow_rows(snapshot, [lot])
     assert len(rows) == 1

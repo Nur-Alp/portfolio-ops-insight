@@ -48,7 +48,11 @@ if [ -d frontend/node_modules ]; then
     echo "pre-push: tsc -b"
     if ! npx tsc -b; then exit 1; fi
     echo "pre-push: vitest run"
-    if ! npx vitest run --silent; then exit 1; fi
+    # Matches the "test" npm script: without this, Node's experimental
+    # webStorage global shadows jsdom's localStorage/sessionStorage, and
+    # every component that touches storage fails with "Cannot read
+    # properties of undefined (reading 'getItem')".
+    if ! NODE_OPTIONS=--no-experimental-webstorage npx vitest run --silent; then exit 1; fi
   ) || fail=1
 else
   echo "pre-push: frontend/node_modules missing - skipping frontend checks (run npm ci in frontend/)"

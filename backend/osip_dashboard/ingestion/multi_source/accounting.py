@@ -43,7 +43,13 @@ def _parse_accounting_balance_sheet(path: Path, scope: str) -> ParsedDataset:
         totals: dict[str, Decimal] = {}
         total_refs: dict[str, tuple[str, int]] = {}
         section = ""
-        for row_number, row in enumerate(sheet.iter_rows(min_row=12, values_only=True), 12):
+        # Starts at row 11, not 12: row 11 is the "Активы" section header
+        # itself (confirmed against the real workbook) - starting one row
+        # later skipped it, so every asset-section line ended up with
+        # section="" while "Обязательства" (row 68+) and "Собственный
+        # капитал" (row 103+) were correctly captured, since those header
+        # rows do fall inside the old scan window.
+        for row_number, row in enumerate(sheet.iter_rows(min_row=11, values_only=True), 11):
             label = _text(_cell(row, 0))
             code = _text(_cell(row, 1))
             if not label:
@@ -145,6 +151,17 @@ _BUDGET_PERIOD_COLUMNS = {
     "actual_9m_2025_kzt": 5, "budget_2025_kzt": 7,
     "oct_2025_kzt": 8, "nov_2025_kzt": 9, "dec_2025_kzt": 10,
     "forecast_2025_kzt": 11, "execution_pct": 12, "deviation_kzt": 13,
+    # A separate, full Jan-Dec monthly breakdown sits to the right of the
+    # summary block above (columns O-Z) - independent of it, not a repeat:
+    # a spot-check against the real file found its own Oct/Nov/Dec figures
+    # disagree with the oct/nov/dec_2025_kzt columns above, which look like
+    # they may be reading stale cached formula results. Column month_01_kzt
+    # is real, populated January data even for cash-flow lines, whose
+    # summary columns (year_2023_kzt etc.) are genuinely blank in the
+    # source - so this is the one reliable month-by-month series here.
+    "month_01_kzt": 14, "month_02_kzt": 15, "month_03_kzt": 16, "month_04_kzt": 17,
+    "month_05_kzt": 18, "month_06_kzt": 19, "month_07_kzt": 20, "month_08_kzt": 21,
+    "month_09_kzt": 22, "month_10_kzt": 23, "month_11_kzt": 24, "month_12_kzt": 25,
 }
 _BUDGET_SECTION_MARKERS = {
     "отчет о прибылях и убытках": "income_statement",
@@ -168,12 +185,13 @@ def _parse_accounting_budget(path: Path, scope: str) -> ParsedDataset:
     balance section headers) is used as the business date rather than
     inventing one.
 
-    The cash-flow section (ОДДС) has every row label but zero populated
-    values in the source file itself; it is scanned exactly like the other
-    two sections and simply yields no records today (rows with every
-    period column blank are dropped) rather than being special-cased, so
-    it starts reporting real data automatically the moment the source
-    workbook is filled in - no code change needed on that day.
+    The cash-flow section (ОДДС) has every row label but its summary block
+    (year_2023_kzt through deviation_kzt) is genuinely blank in the source
+    file - month_01_kzt..month_12_kzt is where its real values live. Every
+    section is scanned identically and rows with every period column blank
+    are dropped rather than being special-cased, so any section starts
+    reporting a given figure automatically the moment the source workbook
+    has it - no code change needed on that day.
     """
     with closing(load_workbook(path, read_only=True, data_only=True)) as workbook:
         sheet = workbook["Бюджет"]

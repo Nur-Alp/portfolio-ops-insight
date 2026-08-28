@@ -2,7 +2,7 @@ import { BarChart, Bar, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAx
 import type { ModuleReadResponse } from "../../../api/types";
 import {
   ChartCard, ChartGrid, ChartTooltip, axisTick, categoryAxisWidth, compact, logAxisDomain, numeric,
-  COLORS, GRID, type Language, type ProvenanceRef, type Row,
+  sourceRefsFromRecords, COLORS, GRID, type Language, type ProvenanceRef, type Row,
 } from "./shared";
 
 export function CorporateFinanceCharts({ data, language, sourceRefs = [] }: { data: ModuleReadResponse; language: Language; sourceRefs?: ProvenanceRef[] }) {
@@ -22,6 +22,7 @@ export function CorporateFinanceCharts({ data, language, sourceRefs = [] }: { da
       // log-transform for the bar height, keep the real amount for the
       // tooltip (see ChartTooltip's "Log"-suffix handling).
       return {
+        row,
         name: String(row.issuer ?? "").trim() || String(row.subject ?? "").trim() || "—",
         placement, demand,
         placementLog: placement != null && placement > 0 ? Math.log10(placement) : null,
@@ -42,7 +43,7 @@ export function CorporateFinanceCharts({ data, language, sourceRefs = [] }: { da
       ? `${baseSubtitle} ${l(`Показаны топ-${deals.length} из ${sortedDeals.length} эмитентов по размеру сделки; полный список — в таблице ниже.`, `Showing the top ${deals.length} of ${sortedDeals.length} issuers by deal size; see the full table below.`)}`
       : baseSubtitle;
     const axisDomain = logAxisDomain(deals.flatMap((row) => [row.placementLog, row.demandLog]));
-    return <ChartCard key={currency} title={`${l("Размещение и удовлетворённый спрос", "Placement and satisfied demand")} · ${currency}`} subtitle={subtitle} basis="source" sourceRefs={sourceRefs}>
+    return <ChartCard key={currency} title={`${l("Размещение и удовлетворённый спрос", "Placement and satisfied demand")} · ${currency}`} subtitle={subtitle} basis="source" sourceRefs={sourceRefsFromRecords(deals.map((item) => item.row), language)}>
       {/* Same long-issuer-name wrapping risk as the client asset chart
           above - a wider label column plus a taller row prevents adjacent
           wrapped labels from overlapping. */}

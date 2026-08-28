@@ -17,7 +17,7 @@ where git >nul 2>nul
 if not errorlevel 1 goto clone
 
 echo Git was not found. Downloading a repository archive instead...
-powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $tmp=Join-Path $env:TEMP ('portfolio-dashboard-'+[guid]::NewGuid()); New-Item -ItemType Directory -Path $tmp | Out-Null; try { $zip=Join-Path $tmp 'dashboard.zip'; Invoke-WebRequest -UseBasicParsing -Uri $env:ARCHIVE_URL -OutFile $zip; Expand-Archive -LiteralPath $zip -DestinationPath $tmp; $dir=Get-ChildItem -LiteralPath $tmp -Directory | Where-Object { $_.Name -like 'portfolio-operations-dashboard-*' } | Select-Object -First 1; if (-not $dir) { throw 'The downloaded archive had an unexpected structure.' }; Move-Item -LiteralPath $dir.FullName -Destination $env:TARGET } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }"
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $tmp=Join-Path $env:TEMP ('portfolio-dashboard-'+[guid]::NewGuid()); New-Item -ItemType Directory -Path $tmp | Out-Null; try { $zip=Join-Path $tmp 'dashboard.zip'; Invoke-WebRequest -UseBasicParsing -Uri $env:ARCHIVE_URL -OutFile $zip; Expand-Archive -LiteralPath $zip -DestinationPath $tmp; $dir=Get-ChildItem -LiteralPath $tmp -Directory | Where-Object { $_.Name -like 'portfolio-ops-insight-*' } | Select-Object -First 1; if (-not $dir) { throw 'The downloaded archive had an unexpected structure.' }; Move-Item -LiteralPath $dir.FullName -Destination $env:TARGET } finally { Remove-Item -LiteralPath $tmp -Recurse -Force -ErrorAction SilentlyContinue }"
 if errorlevel 1 goto failed
 goto start
 

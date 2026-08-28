@@ -196,35 +196,52 @@ def expected_coupon_native(lot: Any) -> Decimal | None:
 def _derive_expected_coupon_native(lot: Any) -> Decimal | None:
     """Derive the expected coupon when OSIP's own formula cache is blank.
 
-    nominal x rate / frequency x quantity, where frequency (payments per
-    year - 1 annual, 2 semi-annual, 4 quarterly, ...) is inferred from the
-    coupon period length as ``round(365 / period_days)``. A bond's coupon
-    payment is a fixed fraction of the annual rate per the payment
-    schedule, not a pro-rata slice of the exact calendar days between two
-    coupon dates (those vary by a few days depending on month lengths, but
-    the payment itself doesn't). Verified against a real OSIP workbook by
-    recalculating it with LibreOffice (which evaluates OSIP's actual
-    formula, cache bug and all): an earlier actual/365-of-period-days
-    version of this function matched a plain annual bond exactly but was
-    consistently ~0.3-0.8% off on semi-annual/quarterly ones; this
-    frequency-based version reproduced all 7 tested lots (annual, semi-annual,
-    and quarterly) exactly.
+    Reproduces OSIP's actual "Сумма ожидаемого купона" formula exactly,
+    read directly from the source's own "Купоннный период" (coupon period,
+    in days) column rather than inferred from the gap between coupon
+    dates - confirmed by recalculating a real workbook with LibreOffice
+    (which evaluates OSIP's actual formula, cache bug and all):
 
-    Requires both the previous and next coupon dates to establish the
-    period length; a first coupon with no prior date is left unavailable
-    rather than guessing a period length. This is a computed stand-in for
+        IF(period=180, nominal*qty*rate/2,
+        IF(period=360, nominal*qty*rate,
+        IF(period=30,  nominal*qty*rate/12,
+        IF(period=90,  nominal*qty*rate/4,
+                       nominal*qty*rate/365*period)))) * coupon_indexation
+
+    An earlier version of this function inferred a payment frequency
+    (round(365/period_days)) from the calendar gap between the previous
+    and next coupon dates instead of reading the period directly. That
+    matched OSIP's own formula for the four standard periods (180/360/30/90
+    days) - rounding a period close to one of those lands on the same
+    fraction either way - but silently diverged on an irregular "stub"
+    period (a bond's first or last coupon, shorter or longer than its
+    regular schedule): a real 211-day stub (ASDBe25, a real ADB bond)
+    rounds to frequency=2 (semi-annual, i.e. /2), while OSIP's own formula
+    correctly falls to the pro-rata else-branch (/365*211) - a 13.5%
+    (3.49M KZT on this lot) understatement, confirmed against LibreOffice's
+    recalculation of the real cell.
+
+    Requires the coupon period; a first coupon with none recorded is left
+    unavailable rather than guessing one. This is a computed stand-in for
     the source's own formula, not a source read - callers/sheets that show
     it disclose as much.
     """
     rate = getattr(lot, "coupon_or_repo_rate", None)
     nominal = getattr(lot, "nominal_value", None)
     quantity = getattr(lot, "quantity", None)
-    previous_date = getattr(lot, "previous_coupon_date", None)
-    next_date = getattr(lot, "next_coupon_date", None)
-    if rate is None or nominal is None or quantity is None or previous_date is None or next_date is None:
+    period_days = getattr(lot, "coupon_period_days", None)
+    if rate is None or nominal is None or quantity is None or period_days is None or period_days <= 0:
         return None
-    period_days = (next_date - previous_date).days
-    if period_days <= 0:
-        return None
-    frequency = max(1, round(Decimal(365) / Decimal(period_days)))
-    return _decimal_value(nominal) * _decimal_value(rate) / Decimal(frequency) * _decimal_value(quantity)
+    base = _decimal_value(nominal) * _decimal_value(quantity) * _decimal_value(rate)
+    if period_days == 180:
+        amount = base / 2
+    elif period_days == 360:
+        amount = base
+    elif period_days == 30:
+        amount = base / 12
+    elif period_days == 90:
+        amount = base / 4
+    else:
+        amount = base / Decimal(365) * period_days
+    indexation = getattr(lot, "coupon_indexation", None)
+    return amount * (indexation if indexation is not None else Decimal(1))

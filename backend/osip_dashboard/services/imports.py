@@ -468,6 +468,8 @@ def _persist_snapshot(
                 listing_rating=position.listing_rating,
                 derived_carrying_value_kzt=position.derived_carrying_value_kzt,
                 expected_coupon_cached=position.expected_coupon_cached,
+                coupon_period_days=position.coupon_period_days,
+                coupon_indexation=position.coupon_indexation,
                 unavailable_fields=list(position.unavailable_fields),
             )
         )

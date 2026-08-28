@@ -510,6 +510,8 @@ class PositionLotRecord(Base):
     listing_rating: Mapped[str] = mapped_column(String(120), nullable=False)
     derived_carrying_value_kzt: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
     expected_coupon_cached: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
+    coupon_period_days: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
+    coupon_indexation: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
     unavailable_fields: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
 
     snapshot: Mapped[PortfolioSnapshotRecord] = relationship(back_populates="position_lots")

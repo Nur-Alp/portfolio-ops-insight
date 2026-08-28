@@ -66,6 +66,8 @@ class PositionLotSnapshot:
     previous_coupon_date: date | None
     listing_rating: str
     expected_coupon_cached: Decimal | None = None
+    coupon_period_days: Decimal | None = None
+    coupon_indexation: Decimal | None = None
     unavailable_fields: tuple[str, ...] = ()
     raw_row: tuple[Any, ...] = field(default_factory=tuple, repr=False)
 
@@ -75,7 +77,21 @@ class PositionLotSnapshot:
         if self.carrying_amount_native is None or self.report_fx_rate is None:
             return None
         indexation = self.principal_indexation if self.principal_indexation is not None else Decimal("1")
-        accrued = self.accrued_income_kzt if self.accrued_income_kzt is not None else ZERO
+        # OSIP's own "Рыночная стоимость" formula only adds accrued interest
+        # for a bond/deposit (=AG+AX); a repo's branch is =AG alone. Every
+        # repo lot seen in real data so far has accrued_income_kzt blank/zero,
+        # so this has never produced an observed divergence - matching the
+        # source's own branching here means it won't produce one later,
+        # either, if a repo ever does carry a nonzero accrued figure.
+        # raw_security_type alone (not source_section too): every real repo
+        # lot checked carries "репо" directly in its own type text
+        # ("авторепо"), and unlike source_section - which is only valid
+        # when rows are read in their real top-to-bottom order, since it's
+        # assigned by walking section-header rows sequentially - a lot's
+        # own type field is self-contained and correct regardless of row
+        # order (confirmed by the reordered-rows tolerance test).
+        is_repo = "репо" in self.raw_security_type.casefold()
+        accrued = ZERO if is_repo else (self.accrued_income_kzt if self.accrued_income_kzt is not None else ZERO)
         return self.carrying_amount_native * self.report_fx_rate * indexation + accrued
 
 @dataclass(frozen=True)
