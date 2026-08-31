@@ -1178,7 +1178,7 @@ def test_invalid_uploads_and_parse_failures(api, workbook_paths):
     assert wrong_extension.status_code == 422
     invalid_ole = upload(api, path, content=b"not an xls")
     assert invalid_ole.status_code == 422
-    oversized = upload(api, path, content=path.read_bytes() + b"x" * (10 * 1024 * 1024))
+    oversized = upload(api, path, content=path.read_bytes() + b"x" * (100 * 1024 * 1024))
     assert oversized.status_code == 422
 
     arbitrary_filename = upload(

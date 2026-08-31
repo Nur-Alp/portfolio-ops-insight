@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     )
     oidc_algorithms: list[str] = Field(default_factory=lambda: ["RS256"])
     oidc_clock_skew_seconds: int = Field(default=60, ge=0, le=300)
-    max_upload_bytes: int = 10 * 1024 * 1024
+    max_upload_bytes: int = 100 * 1024 * 1024
     risk_near_breach_threshold: float = Field(default=0.9, ge=0, lt=1)
     risk_near_breach_policy_version: str = "utilization-ratio-v1"
     # Read-only local dashboards may expose successfully parsed source data
