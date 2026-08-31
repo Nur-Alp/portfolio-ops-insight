@@ -72,6 +72,14 @@ REM same as "no Python found" so the winget/python.org auto-install below
 REM actually runs instead of silently deferring to launch.py's own version
 REM check, which only fails with a manual-install message.
 REM
+REM The version check itself is a real .py file (scripts\_check_python_
+REM version.py), not a `-c "sys.version_info >= (3, 11)"` one-liner: cmd.exe
+REM treats `>`/`<` as redirection operators even inside double quotes, which
+REM silently corrupted that comparison when passed inline - confirmed by a
+REM real Windows CI run where winget successfully installed Python 3.12 at
+REM exactly the expected fallback path below, yet the inline-`-c` version of
+REM this check still failed to detect it.
+REM
 REM A PATH change made by an installer that ran during this same script is
 REM also invisible to this already-running cmd.exe session (child processes
 REM inherit the parent's environment block, not a live re-read of the
@@ -79,13 +87,12 @@ REM registry) - `where`/bare invocation can still fail right after a
 REM successful install for that reason too, so this also checks the
 REM installers' own fixed, well-known locations directly by path.
 set PYTHON=
-set VERSION_CHECK=import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)
-py -3 -c "%VERSION_CHECK%" >nul 2>nul
+py -3 "%~dp0scripts\_check_python_version.py" >nul 2>nul
 if not errorlevel 1 (
   set PYTHON=py -3
   exit /b 0
 )
-python -c "%VERSION_CHECK%" >nul 2>nul
+python "%~dp0scripts\_check_python_version.py" >nul 2>nul
 if not errorlevel 1 (
   set PYTHON=python
   exit /b 0
@@ -97,7 +104,7 @@ for %%P in (
   "C:\Program Files\Python311\python.exe"
 ) do (
   if exist %%P (
-    %%P -c "%VERSION_CHECK%" >nul 2>nul
+    %%P "%~dp0scripts\_check_python_version.py" >nul 2>nul
     if not errorlevel 1 (
       set PYTHON=%%P
       exit /b 0
