@@ -30,6 +30,30 @@ def test_is_running_true_when_pid_alive_and_port_responds(monkeypatch):
     assert demo_service._is_running(os.getpid(), 12345) is True
 
 
+def test_process_exists_uses_the_windows_check_on_windows(monkeypatch):
+    """Regression: os.kill(pid, 0) - the POSIX "does this PID exist" idiom -
+    unconditionally raises OSError [WinError 87] on Windows for any PID,
+    valid or not, since Windows' os.kill doesn't support signal 0. That
+    crashed every real Windows run once server.json already existed from a
+    prior launch. _process_exists must route to the ctypes-based Windows
+    check instead of ever calling os.kill(pid, 0) there."""
+    monkeypatch.setattr(demo_service.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(demo_service, "_win_process_exists", lambda pid: True)
+
+    def _os_kill_should_not_be_called(pid, sig):
+        raise AssertionError("os.kill(pid, 0) must not be called on Windows")
+
+    monkeypatch.setattr(demo_service.os, "kill", _os_kill_should_not_be_called)
+
+    assert demo_service._process_exists(4242) is True
+
+
+def test_process_exists_reflects_the_windows_check_result(monkeypatch):
+    monkeypatch.setattr(demo_service.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(demo_service, "_win_process_exists", lambda pid: False)
+    assert demo_service._process_exists(4242) is False
+
+
 class _FakeProcess:
     """Stands in for subprocess.Popen: .poll() is None until told to "exit"."""
 

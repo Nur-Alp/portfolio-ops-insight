@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
 from pathlib import Path
 import signal
 import subprocess
@@ -50,6 +51,46 @@ def _port_responds(port: int) -> bool:
         return False
 
 
+def _win_process_exists(pid: int) -> bool:
+    """Windows-only existence check with no side effects on the process."""
+    import ctypes
+
+    PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    ERROR_ACCESS_DENIED = 5
+    handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if handle:
+        ctypes.windll.kernel32.CloseHandle(handle)
+        return True
+    # Process exists but we can't query it (rare - e.g. a privileged system
+    # process) - matches the POSIX PermissionError branch in _process_exists.
+    return ctypes.windll.kernel32.GetLastError() == ERROR_ACCESS_DENIED
+
+
+def _process_exists(pid: int) -> bool:
+    """Cross-platform "is this PID alive" check with no side effects.
+
+    ``os.kill(pid, 0)`` is the POSIX idiom for this (signal 0 does nothing,
+    but the syscall still validates the PID). Python's ``os.kill`` on Windows
+    does not support signal 0 at all - it unconditionally raises
+    ``OSError: [WinError 87] The parameter is incorrect`` for *any* PID,
+    valid or not, which is neither ``ProcessLookupError`` nor
+    ``PermissionError`` and so crashed every call site that used to try/except
+    around ``os.kill`` directly. Confirmed via a real crash on Windows: it
+    only happens once ``server.json`` already exists from a prior run (a
+    fresh checkout has no state to check yet), which is exactly why it never
+    showed up in CI - those always start from a pristine clone.
+    """
+    if platform.system() == "Windows":
+        return _win_process_exists(pid)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def _is_running(pid: int, port: int | None = None) -> bool:
     """Report whether the recorded demo process is actually serving traffic.
 
@@ -61,12 +102,8 @@ def _is_running(pid: int, port: int | None = None) -> bool:
     intentionally omits ``port`` since it only needs to know the process has
     exited, not whether it was ever reachable.
     """
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
+    if not _process_exists(pid):
         return False
-    except PermissionError:
-        return True
     if port is not None and not _port_responds(port):
         return False
     return True
