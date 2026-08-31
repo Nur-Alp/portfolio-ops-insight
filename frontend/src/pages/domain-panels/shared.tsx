@@ -1,14 +1,11 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { AlertTriangle } from "lucide-react";
 import { dashboardApi } from "../../api/client";
-import type { ActionItem, DatasetVersion, ModuleReadResponse } from "../../api/types";
+import type { DatasetVersion, ModuleReadResponse } from "../../api/types";
 import type { components } from "../../api/schema";
-import { EmptyState, ErrorState, LoadingState } from "../../components/ui/AsyncState";
-import { Drawer } from "../../components/ui/Drawer";
 import { Panel } from "../../components/ui/Panel";
 import { StatusPill } from "../../components/ui/StatusPill";
-import { formatDate, formatKzt, formatNumber, formatPercent, humanize } from "../../lib/format";
+import { formatDate, formatKzt, formatNumber, formatPercent } from "../../lib/format";
 import { useI18n } from "../../i18n";
 import type { ChartDomain } from "../../components/charts/DomainCharts";
 
@@ -170,119 +167,6 @@ export function FormulaAuditNotice({ data, language }: { data: ModuleReadRespons
     ? l("Проверка опубликованных полей блокирует публикацию .xlsx, если используемый результат формулы пуст или ошибочен.", "The published-field gate blocks an .xlsx publication when a consumed formula result is blank or erroneous.")
     : l("Обнаружена проблема в содержимом источника, но проверка опубликованных полей не блокирует публикацию. Исправьте исходную книгу и загрузите новую версию, если это значение используется.", "A source-content issue was detected, but the published-field gate is not blocking publication. Correct the source workbook and upload a new version if this value is used.");
   return <div className="alert-banner alert-banner--warning"><AlertTriangle /><div><strong>{l("Проверка источника требует внимания", "Source check requires attention")}</strong><p>{details}. {explanation} {l("Приложение не пересчитывает произвольные формулы; для .xls результаты формул недоступны этому читателю.", "The application does not recalculate arbitrary formulas; .xls formula results are not exposed by this reader.")}</p></div></div>;
-}
-
-export function ActionItemsPanel({ domain, language }: { domain: "risk" | "accounting"; language: "ru" | "en" }) {
-  const l = (ru: string, en: string) => language === "en" ? en : ru;
-  const queryClient = useQueryClient();
-  const [statusFilter, setStatusFilter] = useState<"open" | "resolved">("open");
-  const [selected, setSelected] = useState<ActionItem | null>(null);
-  const [ownerId, setOwnerId] = useState("");
-  const [dueDate, setDueDate] = useState("");
-  const [assignReason, setAssignReason] = useState("");
-  const [resolveComment, setResolveComment] = useState("");
-  const [reopenReason, setReopenReason] = useState("");
-  const [actionError, setActionError] = useState("");
-  const [showCreate, setShowCreate] = useState(false);
-  const [newKind, setNewKind] = useState("");
-  const [newTitle, setNewTitle] = useState("");
-
-  const items = useQuery({ queryKey: ["action-items", domain, statusFilter], queryFn: () => dashboardApi.actionItems(domain, statusFilter) });
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: ["action-items", domain] });
-
-  const create = useMutation({
-    mutationFn: () => dashboardApi.createActionItem({ domain, kind: newKind.trim(), title: newTitle.trim() }),
-    onSuccess: async () => { setActionError(""); setNewKind(""); setNewTitle(""); setShowCreate(false); await invalidate(); },
-    onError: (error: Error) => setActionError(error.message)
-  });
-  const assign = useMutation({
-    mutationFn: (variables: { ownerId: string | null; dueDate: string | null; reason: string }) => dashboardApi.assignActionItem(selected!.id, variables),
-    onSuccess: async (updated) => { setActionError(""); setAssignReason(""); await invalidate(); setSelected((current) => current ? { ...current, ...updated } : current); },
-    onError: (error: Error) => setActionError(error.message)
-  });
-  const resolve = useMutation({
-    mutationFn: () => dashboardApi.resolveActionItem(selected!.id, resolveComment),
-    onSuccess: async (updated) => { setActionError(""); setResolveComment(""); await invalidate(); setSelected((current) => current ? { ...current, ...updated } : current); },
-    onError: (error: Error) => setActionError(error.message)
-  });
-  const reopen = useMutation({
-    mutationFn: () => dashboardApi.reopenActionItem(selected!.id, reopenReason),
-    onSuccess: async (updated) => { setActionError(""); setReopenReason(""); await invalidate(); setSelected((current) => current ? { ...current, ...updated } : current); },
-    onError: (error: Error) => setActionError(error.message)
-  });
-
-  const openItem = (item: ActionItem) => {
-    setSelected(item);
-    setOwnerId(item.owner_id ?? "");
-    setDueDate(item.due_date ?? "");
-    setAssignReason("");
-    setResolveComment("");
-    setReopenReason("");
-    setActionError("");
-  };
-
-  const rows = items.data?.items ?? [];
-
-  return <Panel
-    title={l("Пункты действий", "Action items")}
-    subtitle={l("Операционные задачи по превышениям и шагам закрытия периода; отдельно от замечаний качества данных.", "Operational to-dos for breach exceptions and close steps; separate from data-quality findings.")}
-    action={<div className="table-tools">
-      <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value as "open" | "resolved")} aria-label={l("Статус", "Status")}>
-        <option value="open">{l("Открытые", "Open")}</option>
-        <option value="resolved">{l("Закрытые", "Resolved")}</option>
-      </select>
-      <button className="button button--secondary" type="button" onClick={() => setShowCreate((value) => !value)}>{l("Новый пункт", "New item")}</button>
-    </div>}
-  >
-    {showCreate ? <div className="assignment-form">
-      <label>{l("Тип", "Kind")}<input value={newKind} onChange={(event) => setNewKind(event.target.value)} placeholder={domain === "risk" ? l("например, breach_exception", "e.g. breach_exception") : l("например, close_step", "e.g. close_step")} maxLength={60} /></label>
-      <label>{l("Заголовок", "Title")}<textarea value={newTitle} onChange={(event) => setNewTitle(event.target.value)} maxLength={500} /></label>
-      {actionError ? <div className="inline-error" role="alert">{actionError}</div> : null}
-      <button className="button button--primary" type="button" disabled={create.isPending || !newKind.trim() || !newTitle.trim()} onClick={() => create.mutate()}>{create.isPending ? l("Сохранение…", "Saving…") : l("Создать", "Create")}</button>
-    </div> : null}
-    {items.isLoading
-      ? <LoadingState label={l("Загрузка пунктов действий", "Loading action items")} />
-      : items.error
-        ? <ErrorState error={items.error} retry={() => items.refetch()} />
-        : rows.length
-          ? <div className="table-scroll" tabIndex={0}><table><thead><tr><th>{l("Заголовок", "Title")}</th><th>{l("Тип", "Kind")}</th><th>{l("Ответственный", "Owner")}</th><th>{l("Статус", "Status")}</th></tr></thead><tbody>{rows.map((item) => <tr key={item.id} tabIndex={0} onClick={() => openItem(item)} onKeyDown={(event) => { if (event.key === "Enter") openItem(item); }}><td><strong>{item.title}</strong></td><td>{humanize(item.kind, language)}</td><td>{item.owner_id ? <span>{item.owner_id}{item.due_date ? ` · ${formatDate(item.due_date, language)}` : ""}{item.is_overdue ? <> · <StatusPill status="overdue" /></> : null}</span> : <span className="unavailable-note unavailable-note--pill">{l("Не назначено", "Unassigned")}</span>}</td><td><StatusPill status={item.status} /></td></tr>)}</tbody></table></div>
-          : <EmptyState title={statusFilter === "open" ? l("Нет открытых пунктов", "No open items") : l("Нет закрытых пунктов", "No resolved items")} detail={l("Создайте пункт для отслеживания исключения или шага закрытия.", "Create an item to track an exception or close step.")} />}
-    <Drawer open={Boolean(selected)} onClose={() => setSelected(null)} title={selected?.title ?? l("Пункт действия", "Action item")} subtitle={selected ? humanize(selected.kind, language) : undefined}>
-      {selected ? <div className="drawer-stack">
-        <div className="drawer-section">
-          <h3>{l("Статус", "Status")}</h3>
-          <p><StatusPill status={selected.status} /> {selected.owner_id ? l(`Назначено: ${selected.owner_id}`, `Assigned to ${selected.owner_id}`) : l("Не назначено", "Unassigned")}{selected.due_date ? ` · ${formatDate(selected.due_date, language)}` : ""}{selected.is_overdue ? <> · <StatusPill status="overdue" /></> : null}</p>
-          {selected.assignment_reason ? <p className="unavailable-note">{selected.assignment_reason}</p> : null}
-        </div>
-        {actionError ? <div className="inline-error" role="alert">{actionError}</div> : null}
-        {selected.status === "open" ? <>
-          <div className="drawer-section">
-            <h3>{l("Назначить ответственного", "Assign owner")}</h3>
-            <div className="assignment-form">
-              <label>{l("Ответственный", "Owner")}<input value={ownerId} onChange={(event) => setOwnerId(event.target.value)} maxLength={200} /></label>
-              <label>{l("Срок", "Due date")}<input type="date" value={dueDate} onChange={(event) => setDueDate(event.target.value)} disabled={!ownerId.trim()} /></label>
-              <label>{l("Обоснование", "Reason")}<textarea value={assignReason} onChange={(event) => setAssignReason(event.target.value)} maxLength={4000} /></label>
-              <button className="button button--primary" type="button" disabled={assign.isPending || !assignReason.trim()} onClick={() => assign.mutate({ ownerId: ownerId.trim() || null, dueDate: ownerId.trim() ? (dueDate || null) : null, reason: assignReason })}>{assign.isPending ? l("Сохранение…", "Saving…") : l("Назначить", "Assign")}</button>
-            </div>
-          </div>
-          <div className="drawer-section">
-            <h3>{l("Закрыть пункт", "Resolve")}</h3>
-            <div className="assignment-form">
-              <label>{l("Комментарий закрытия", "Resolution comment")}<textarea value={resolveComment} onChange={(event) => setResolveComment(event.target.value)} maxLength={4000} /></label>
-              <button className="button button--primary" type="button" disabled={resolve.isPending || !resolveComment.trim()} onClick={() => resolve.mutate()}>{resolve.isPending ? l("Сохранение…", "Saving…") : l("Закрыть", "Resolve")}</button>
-            </div>
-          </div>
-        </> : <div className="drawer-section">
-          <h3>{l("Переоткрыть", "Reopen")}</h3>
-          <p>{selected.resolved_by ? l(`Закрыл: ${selected.resolved_by}`, `Resolved by ${selected.resolved_by}`) : null}{selected.resolution_comment ? ` — ${selected.resolution_comment}` : ""}</p>
-          <div className="assignment-form">
-            <label>{l("Причина повторного открытия", "Reopen reason")}<textarea value={reopenReason} onChange={(event) => setReopenReason(event.target.value)} maxLength={4000} /></label>
-            <button className="button button--secondary" type="button" disabled={reopen.isPending || !reopenReason.trim()} onClick={() => reopen.mutate()}>{reopen.isPending ? l("Сохранение…", "Saving…") : l("Переоткрыть", "Reopen")}</button>
-          </div>
-        </div>}
-      </div> : null}
-    </Drawer>
-  </Panel>;
 }
 
 // A version's own report date is the most useful way to tell versions apart,

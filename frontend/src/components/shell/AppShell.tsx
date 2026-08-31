@@ -30,7 +30,6 @@ import { formatReportDate } from "../../lib/format";
 import { useI18n } from "../../i18n";
 import type { DashboardSearch } from "../../router";
 import { CommandPalette } from "./CommandPalette";
-import { NotificationBell } from "./NotificationBell";
 
 export const navigation = [
   { to: "/asset-management", labelKey: "nav.assetManagement", icon: LineChart, exact: false, group: "business", domain: "back_office" },
@@ -184,7 +183,6 @@ export function AppShell() {
               {DOMAIN_OPTIONS.map((scope) => <option key={scope} value={scope}>{domainLabel(scope, t)}</option>)}
             </select>
           </label> : null}
-          <NotificationBell />
           <span className="role-pill">
             {isOidcMode() ? t("top.reader") : isDemoMode() ? (getDemoActor()?.displayName ?? t("top.reader")) : t("top.domainOperator")}
           </span>

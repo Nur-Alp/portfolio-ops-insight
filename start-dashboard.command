@@ -38,12 +38,18 @@ if command -v git >/dev/null 2>&1 && [ -d .git ]; then
 fi
 
 find_python() {
+  # A candidate must actually run *and* be new enough (matches launch.py's
+  # own MIN_PYTHON): an older system/Homebrew Python already on PATH would
+  # otherwise be accepted here, skipping the Homebrew/python.org install
+  # below, and only fail later inside launch.py with a manual-install
+  # message instead of being fixed automatically.
   PYTHON=""
   for candidate in python3.12 python3.11 python3 python \
     /opt/homebrew/bin/python3 /usr/local/bin/python3 \
     /Library/Frameworks/Python.framework/Versions/3.12/bin/python3 \
     /Library/Frameworks/Python.framework/Versions/3.11/bin/python3; do
-    if command -v "$candidate" >/dev/null 2>&1; then
+    if command -v "$candidate" >/dev/null 2>&1 && \
+      "$candidate" -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" >/dev/null 2>&1; then
       PYTHON="$candidate"
       return 0
     fi

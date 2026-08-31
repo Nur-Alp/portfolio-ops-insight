@@ -24,7 +24,7 @@ import { ClientDetailPanel, ClientIdentityExceptionPanel, ClientManagerPanel, Cl
 import { AssetManagementVersionPickerBar, FundControlsPanel } from "./domain-panels/FundPanels";
 import { isRiskNearBreach, riskNearBreachThreshold, RiskControlsPanel, RiskVersionPickerBar } from "./domain-panels/RiskPanels";
 import {
-  ActionItemsPanel, card, domainCardProvenance, domainSourceRefs, DomainSourceMeta, DomainTable,
+  card, domainCardProvenance, domainSourceRefs, DomainSourceMeta, DomainTable,
   FormulaAuditNotice, isRepoTrade, money, moneyThousands, ReadinessChecklist, VersionPicker,
   type DomainKind, type Row, STANDARD_TABLE_PAGE_SIZE,
 } from "./domain-panels/shared";
@@ -273,7 +273,6 @@ export function DomainPage({ kind }: { kind: DomainKind }) {
         <AccountMappingPanel data={data} language={language} />
         {accountingExportPanel}
       </> : null}
-      {kind === "risk" || kind === "accounting" ? <ActionItemsPanel domain={kind} language={language} /> : null}
       {kind === "clients" && selectedClientRecord ? <div ref={clientDetailRef} tabIndex={-1}><ClientDetailPanel recordId={selectedClientRecord} onClose={() => setSelectedClientRecord(null)} /></div> : null}
       <div className="unavailable-note">{data.disclosure}</div>
     </PageFrame>

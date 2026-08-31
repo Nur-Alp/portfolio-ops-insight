@@ -22,9 +22,7 @@ const api = vi.hoisted(() => ({
     rows: [{ row_number: 5, values: ["SOBSTV", "country", "Kazakhstan"] }]
   }),
   datasetVersions: vi.fn().mockResolvedValue({ items: [] }),
-  actionItems: vi.fn().mockResolvedValue({ items: [] }),
   operationsReadiness: vi.fn().mockResolvedValue({ datasets: [], reconciliations: [], readiness: [] }),
-  createActionItem: vi.fn(),
   exportFundData: vi.fn(),
   exportBrokerageData: vi.fn(),
   exportCorporateFinanceData: vi.fn().mockResolvedValue(undefined),
@@ -755,32 +753,6 @@ describe("multi-source domain pages", () => {
     expect(within(monthlyPanel).getByText("Dec")).toBeInTheDocument();
 
     document.body.removeChild(slot);
-  });
-
-  it("lists open action items and lets a reviewer create a new one", async () => {
-    api.risk.mockResolvedValue({
-      available: true,
-      disclosure: "",
-      report_date_mismatch: false,
-      report_dates: [],
-      sources: [],
-      summaries: { risk_limits_sobstv: { limit_count: 0, breach_count: 0 }, risk_limits_tabys: { limit_count: 0, breach_count: 0 } },
-      records: { risk_limits_sobstv: [], risk_limits_tabys: [] },
-      pinned_dataset_types: []
-    });
-    api.actionItems.mockResolvedValue({
-      items: [{ id: "item-1", domain: "risk", kind: "breach_exception", title: "Follow up on country-limit breach", status: "open", owner_id: null, due_date: null, is_overdue: false, created_by: "reviewer", created_at: "2026-07-01T00:00:00Z", assigned_by: null, assigned_at: null, assignment_reason: null, resolved_by: null, resolved_at: null, resolution_comment: null }]
-    });
-    api.createActionItem.mockResolvedValue({ id: "item-2", domain: "risk", kind: "close_step", title: "New follow-up", status: "open", owner_id: null, due_date: null, is_overdue: false, created_by: "reviewer", created_at: "2026-07-01T00:00:00Z", assigned_by: null, assigned_at: null, assignment_reason: null, resolved_by: null, resolved_at: null, resolution_comment: null });
-
-    await renderWithProviders(<ProvenanceProvider><DomainPage kind="risk" /></ProvenanceProvider>);
-
-    expect(await screen.findByText("Follow up on country-limit breach")).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "New item" }));
-    fireEvent.change(screen.getByLabelText("Kind"), { target: { value: "close_step" } });
-    fireEvent.change(screen.getByLabelText("Title"), { target: { value: "New follow-up" } });
-    fireEvent.click(screen.getByRole("button", { name: "Create" }));
-    await waitFor(() => expect(api.createActionItem).toHaveBeenCalledWith({ domain: "risk", kind: "close_step", title: "New follow-up" }));
   });
 
   it("renders the country x instrument-category pivot with a valid per-row total but no cross-currency column total", async () => {

@@ -426,31 +426,6 @@ export const dashboardApi = {
         body: { owner_id: body.ownerId, due_date: body.dueDate, reason: body.reason }
       })
     ),
-  actionItems: (domain?: string, status?: string, kind?: string) =>
-    unwrap(client.GET("/api/v1/action-items", { headers: headers(), params: { query: { domain, status, kind } } })),
-  createActionItem: (body: { domain: string; kind: string; title: string; datasetType?: string | null; scopeCode?: string | null; referenceKey?: string | null }) =>
-    unwrap(client.POST("/api/v1/action-items", {
-      headers: headers(),
-      body: { domain: body.domain, kind: body.kind, title: body.title, dataset_type: body.datasetType, scope_code: body.scopeCode, reference_key: body.referenceKey }
-    })),
-  assignActionItem: (itemId: string, body: { ownerId: string | null; dueDate: string | null; reason: string }) =>
-    unwrap(client.POST("/api/v1/action-items/{item_id}/assign", {
-      headers: headers(),
-      params: { path: { item_id: itemId } },
-      body: { owner_id: body.ownerId, due_date: body.dueDate, reason: body.reason }
-    })),
-  resolveActionItem: (itemId: string, comment: string) =>
-    unwrap(client.POST("/api/v1/action-items/{item_id}/resolve", {
-      headers: headers(),
-      params: { path: { item_id: itemId } },
-      body: { comment }
-    })),
-  reopenActionItem: (itemId: string, reason: string) =>
-    unwrap(client.POST("/api/v1/action-items/{item_id}/reopen", {
-      headers: headers(),
-      params: { path: { item_id: itemId } },
-      body: { reason }
-    })),
   reports: (snapshotId: string) =>
     unwrap(
       client.GET("/api/v1/snapshots/{snapshot_id}/reports", {

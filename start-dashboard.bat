@@ -65,7 +65,12 @@ REM Windows registers "App Execution Alias" stub executables for python.exe/
 REM py.exe (in %LocalAppData%\Microsoft\WindowsApps, alongside winget.exe
 REM itself) that `where` happily finds even when no real Python is
 REM installed - running the stub just opens the Microsoft Store instead of
-REM Python. Actually invoke each candidate and check it really works.
+REM Python. Actually invoke each candidate and check it really works - and
+REM check its version, not just that it runs: a Python that's already on
+REM PATH but older than launch.py's own minimum (3.11) must be treated the
+REM same as "no Python found" so the winget/python.org auto-install below
+REM actually runs instead of silently deferring to launch.py's own version
+REM check, which only fails with a manual-install message.
 REM
 REM A PATH change made by an installer that ran during this same script is
 REM also invisible to this already-running cmd.exe session (child processes
@@ -74,12 +79,13 @@ REM registry) - `where`/bare invocation can still fail right after a
 REM successful install for that reason too, so this also checks the
 REM installers' own fixed, well-known locations directly by path.
 set PYTHON=
-py -3 -c "import sys" >nul 2>nul
+set VERSION_CHECK=import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)
+py -3 -c "%VERSION_CHECK%" >nul 2>nul
 if not errorlevel 1 (
   set PYTHON=py -3
   exit /b 0
 )
-python -c "import sys" >nul 2>nul
+python -c "%VERSION_CHECK%" >nul 2>nul
 if not errorlevel 1 (
   set PYTHON=python
   exit /b 0
@@ -91,7 +97,7 @@ for %%P in (
   "C:\Program Files\Python311\python.exe"
 ) do (
   if exist %%P (
-    %%P -c "import sys" >nul 2>nul
+    %%P -c "%VERSION_CHECK%" >nul 2>nul
     if not errorlevel 1 (
       set PYTHON=%%P
       exit /b 0

@@ -1,0 +1,1 @@
+import{j as e}from"./index-CHqs2mQp.js";function o({language:r}){return e.jsxs("span",{className:"source-row-legend",children:[e.jsx("span",{className:"source-row-legend__dot","aria-hidden":"true"}),r==="en"?"Source preview":"Просмотр источника"]})}export{o as S};

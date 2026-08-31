@@ -39,6 +39,4 @@ export type DatasetVersion = Schemas["DatasetVersionResponse"];
 export type ModuleReadResponse = Schemas["ModuleReadResponse"];
 export type SessionContext = Schemas["SessionContextResponse"];
 export type SourcePreviewResponse = Schemas["SourcePreviewResponse"];
-export type ActionItem = Schemas["ActionItemResponse"];
-export type ActionItemListResponse = Schemas["ActionItemListResponse"];
 export type DemoLoginResponse = Schemas["DemoLoginResponse"];
