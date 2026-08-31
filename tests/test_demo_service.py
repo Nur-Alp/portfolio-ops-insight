@@ -54,6 +54,56 @@ def test_process_exists_reflects_the_windows_check_result(monkeypatch):
     assert demo_service._process_exists(4242) is False
 
 
+def _prepare_stop_state(monkeypatch, tmp_path):
+    state_dir = tmp_path / "state"
+    pid_path = state_dir / "server.json"
+    state_dir.mkdir()
+    pid_path.write_text('{"pid": 4242, "port": 8765}', encoding="utf-8")
+    monkeypatch.setattr(demo_service, "PID_PATH", pid_path)
+    monkeypatch.setattr(demo_service, "_remove_stale_state", lambda: None)
+    monkeypatch.setattr(demo_service.time, "sleep", lambda seconds: None)
+    return pid_path
+
+
+def test_stop_treats_an_already_exited_target_as_success(monkeypatch, tmp_path):
+    """Regression: stop() called os.kill(pid, signal.SIGTERM) with no
+    try/except at all. If the recorded process had already exited on its own
+    (crashed, killed externally, or a race with the liveness check just
+    above), os.kill raises ProcessLookupError on POSIX but a plain OSError
+    (not ProcessLookupError) on Windows - typically the same WinError 87
+    underlying _process_exists' fix - which propagated uncaught and crashed
+    stop() (and therefore restart(), which calls stop() first)."""
+    pid_path = _prepare_stop_state(monkeypatch, tmp_path)
+
+    def _kill_raises(pid, sig):
+        raise OSError("[WinError 87] The parameter is incorrect")
+
+    monkeypatch.setattr(demo_service.os, "kill", _kill_raises)
+    monkeypatch.setattr(demo_service, "_process_exists", lambda pid: False)
+
+    assert demo_service.stop() == 0
+    assert not pid_path.exists()
+
+
+def test_stop_reraises_a_genuine_kill_failure(monkeypatch, tmp_path):
+    """A kill failure against a target that's still actually alive (e.g. a
+    real permission problem) must not be silently swallowed."""
+    _prepare_stop_state(monkeypatch, tmp_path)
+
+    def _kill_raises(pid, sig):
+        raise OSError("Access is denied")
+
+    monkeypatch.setattr(demo_service.os, "kill", _kill_raises)
+    monkeypatch.setattr(demo_service, "_process_exists", lambda pid: True)
+
+    try:
+        demo_service.stop()
+        raised = False
+    except OSError:
+        raised = True
+    assert raised
+
+
 class _FakeProcess:
     """Stands in for subprocess.Popen: .poll() is None until told to "exit"."""
 

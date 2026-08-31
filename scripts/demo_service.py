@@ -201,7 +201,19 @@ def stop() -> int:
     if state is None:
         print("Demo is already stopped.")
         return 0
-    os.kill(state["pid"], signal.SIGTERM)
+    try:
+        os.kill(state["pid"], signal.SIGTERM)
+    except OSError:
+        # The process could have exited on its own between the liveness
+        # check above and this call (or, on Windows, os.kill's
+        # OpenProcess()/TerminateProcess() path raises a plain OSError - not
+        # ProcessLookupError - for a PID that no longer exists, typically
+        # WinError 87, the same underlying failure fixed in
+        # _process_exists()). Only treat "already gone" as success; a real
+        # failure (e.g. genuinely denied permission on a still-live process)
+        # must still surface.
+        if _process_exists(state["pid"]):
+            raise
     for _ in range(50):
         if not _is_running(state["pid"]):
             PID_PATH.unlink(missing_ok=True)
